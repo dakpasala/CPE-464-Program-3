@@ -1,0 +1,274 @@
+/*
+ * CPE 464: P2P File Sharing - Selective Repeat ARQ
+ *
+ * This file implements the selective repeat protocol for reliable UDP transfer.
+ * You need to implement both sender and receiver functionality.
+ *
+ * Key concepts:
+ * - Sliding window protocol with WINDOW_SIZE packets
+ * - Timeouts and retransmissions (TIMEOUT_MS, MAX_RETRIES)
+ * - Out-of-order packet buffering
+ * - Checksum validation
+ * - Sequence number management
+ */
+
+#include "selective_repeat.h"
+#include <string.h>
+
+/* ========== Sender Implementation ========== */
+
+/*
+ * Initialize sender state.
+ * Setup window, calculate number of chunks, initialize sequence numbers.
+ */
+int sr_sender_init(sr_sender_t *sender, int udp_fd,
+                   const struct sockaddr_in *peer_addr,
+                   const uint8_t *file_data, uint32_t file_size,
+                   lossy_link_t *lossy_link) {
+    // TODO: Initialize sender structure
+    // - Zero out the structure (use memset)
+    // - Store parameters: socket fd, peer address, file data/size, lossy_link
+    // - Calculate num_chunks (round up: how many CHUNK_SIZE blocks needed?)
+    // - Initialize sequence number tracking (base and next_seq)
+    // - Initialize all window entries to PKT_EMPTY state
+    (void)sender;
+    (void)udp_fd;
+    (void)peer_addr;
+    (void)file_data;
+    (void)file_size;
+    (void)lossy_link;
+    return 0;
+}
+
+/*
+ * Build a UDP data packet.
+ * Creates UDP header with checksum and appends data payload.
+ */
+__attribute__((unused))
+static void build_data_packet(uint8_t *packet, uint32_t seq_num,
+                             const uint8_t *data, uint16_t data_len) {
+    // TODO: Build data packet
+    // 1. Cast packet buffer to udp_header_t and fill in fields:
+    //    - msg_type = UDP_DATA
+    //    - seq_num (IMPORTANT: convert to network byte order with htonl!)
+    //    - data_len (IMPORTANT: convert to network byte order with htons!)
+    //    - Set other fields appropriately (flags, ack_num, window)
+    // 2. Copy data payload after the header
+    // 3. Calculate checksum over entire packet (header + data):
+    //    - MUST set checksum field to 0 first
+    //    - Use calculate_checksum() from protocol.h
+    //    - Store result in checksum field
+    (void)packet;
+    (void)seq_num;
+    (void)data;
+    (void)data_len;
+}
+
+/*
+ * Build a UDP ACK packet.
+ */
+__attribute__((unused))
+static void build_ack_packet(uint8_t *packet, uint32_t ack_num) {
+    // TODO: Build ACK packet (similar to data packet but no payload)
+    // - Fill in udp_header_t: msg_type=UDP_ACK, ack_num, data_len=0
+    // - IMPORTANT: Convert ack_num to network byte order (htonl)
+    // - Calculate checksum over header (remember: set checksum=0 first)
+    (void)packet;
+    (void)ack_num;
+}
+
+/*
+ * Send packets within the current window.
+ * Send all unsent packets from next_seq up to base + WINDOW_SIZE.
+ * Returns number of packets sent.
+ */
+int sr_sender_send_window(sr_sender_t *sender) {
+    // TODO: Send all unsent packets that fit in the current window
+    //
+    // For each packet that can be sent (within window bounds):
+    //   1. Extract the appropriate chunk from file_data
+    //      - Calculate offset and chunk size (last chunk may be smaller!)
+    //   2. Build the data packet using build_data_packet()
+    //   3. Send the packet:
+    //      - Use lossy_send() if lossy_link is set, otherwise sendto()
+    //   4. Update the window entry for this packet:
+    //      - Mark as PENDING, store send timestamp, copy data for retransmission
+    //   5. Advance next_seq
+    //
+    // HINT: The window can hold WINDOW_SIZE packets at a time
+    // HINT: Use get_time_ms() for timestamps
+    // Return the number of new packets sent
+    (void)sender;
+    return 0;
+}
+
+/*
+ * Handle an incoming ACK packet.
+ * Mark packet as acknowledged and slide window if possible.
+ */
+int sr_sender_handle_ack(sr_sender_t *sender, const udp_header_t *hdr) {
+    // TODO: Process incoming ACK packet
+    //
+    // 1. Extract and validate the ack_num
+    //    - IMPORTANT: Convert from network byte order (ntohl)
+    //    - Ignore ACKs outside the current window range
+    //
+    // 2. Mark the corresponding packet as acknowledged in the window
+    //    - Find the correct window slot (think: circular buffer)
+    //    - Verify the sequence number matches before marking
+    //    - Update chunks_acked counter
+    //
+    // 3. Attempt to slide the window forward
+    //    - The window can only slide when consecutive packets starting
+    //      from base are all acknowledged
+    //    - Free up slots as the window slides (mark as PKT_EMPTY)
+    //    - This allows new packets to be sent
+    //
+    // Think: Why does selective repeat only slide on consecutive ACKs?
+    (void)sender;
+    (void)hdr;
+    return 0;
+}
+
+/*
+ * Check for timed-out packets and retransmit.
+ * Scans all PENDING packets in window and retransmits if timeout expired.
+ * Returns number of packets retransmitted, or -1 if max retries exceeded.
+ */
+int sr_sender_check_timeouts(sr_sender_t *sender, uint64_t now_ms) {
+    // TODO: Detect and retransmit timed-out packets
+    //
+    // Scan all packets currently in the window (between base and next_seq):
+    //   - For each PENDING packet that has timed out (>= TIMEOUT_MS):
+    //     * Check retry limit (return -1 if MAX_RETRIES exceeded)
+    //     * Retransmit the packet (data is buffered in window entry)
+    //     * Update the send timestamp and retry count
+    //
+    // IMPORTANT: Only retransmit individual timed-out packets, not the entire window!
+    // That's what makes this Selective Repeat, not Go-Back-N.
+    //
+    // Return: Number of packets retransmitted, or -1 on failure
+    (void)sender;
+    (void)now_ms;
+    return 0;
+}
+
+/*
+ * Check if file transfer is complete.
+ * Returns 1 if all chunks have been acknowledged.
+ */
+int sr_sender_is_complete(const sr_sender_t *sender) {
+    // TODO: Check if all chunks have been acknowledged
+    (void)sender;
+    return 0;
+}
+
+/* ========== Receiver Implementation ========== */
+
+/*
+ * Initialize receiver state.
+ * Allocate file buffer and setup window.
+ */
+int sr_receiver_init(sr_receiver_t *receiver, int udp_fd,
+                     const struct sockaddr_in *peer_addr,
+                     uint32_t file_size, uint32_t num_chunks,
+                     lossy_link_t *lossy_link) {
+    // TODO: Initialize receiver structure
+    // - Zero out the structure (use memset)
+    // - Store parameters: socket fd, peer address, file_size, num_chunks, lossy_link
+    // - Allocate file_buffer to hold the complete file (use malloc)
+    // - Initialize base = 0 (next expected sequence number)
+    // - Initialize all window entries as not received
+    //
+    // The file_buffer will be filled in order as packets are received and the window slides
+    (void)receiver;
+    (void)udp_fd;
+    (void)peer_addr;
+    (void)file_size;
+    (void)num_chunks;
+    (void)lossy_link;
+    return 0;
+}
+
+/*
+ * Handle an incoming data packet.
+ * Verify checksum, buffer if in window, send ACK, slide window if possible.
+ */
+int sr_receiver_handle_data(sr_receiver_t *receiver, const uint8_t *packet, size_t len) {
+    // TODO: Process incoming data packet
+    //
+    // 1. Validate the packet:
+    //    - Check minimum length (must have complete header)
+    //    - Verify checksum (IMPORTANT: set checksum field to 0 before computing!)
+    //    - Extract seq_num (IMPORTANT: convert from network byte order with ntohl)
+    //
+    // 2. Determine how to handle based on sequence number:
+    //    Think about three cases:
+    //    - Packet is behind the window (already delivered to application)
+    //    - Packet is ahead of the window (too far in future, can't buffer)
+    //    - Packet is within the window (buffer it!)
+    //
+    // 3. For packets that should be acknowledged:
+    //    - Buffer the data in the appropriate window slot
+    //    - Send an ACK back to the sender
+    //    - Update chunks_received counter (if not a duplicate)
+    //
+    // 4. Try to slide the window:
+    //    - Check if we now have consecutive packets starting from base
+    //    - Deliver in-order data to the file_buffer
+    //    - Advance base and free up window slots
+    //
+    // KEY INSIGHT: Why do we ACK duplicates? What happens if ACKs are lost?
+    (void)receiver;
+    (void)packet;
+    (void)len;
+    return 0;
+}
+
+/*
+ * Send an ACK for a received packet.
+ */
+int sr_receiver_send_ack(sr_receiver_t *receiver, uint32_t seq_num) {
+    // TODO: Send ACK for the given sequence number
+    // - Build an ACK packet using build_ack_packet()
+    // - Send using lossy_send() if lossy_link is set, otherwise sendto()
+    (void)receiver;
+    (void)seq_num;
+    return 0;
+}
+
+/*
+ * Check if file transfer is complete.
+ * Returns 1 if all chunks have been received and delivered.
+ */
+int sr_receiver_is_complete(const sr_receiver_t *receiver) {
+    // TODO: Check if all chunks have been received and delivered
+    // HINT: When is the file complete? Think about base and num_chunks
+    (void)receiver;
+    return 0;
+}
+
+/*
+ * Get the assembled file buffer.
+ * Returns pointer to complete file data.
+ */
+const uint8_t* sr_receiver_get_file(const sr_receiver_t *receiver, uint32_t *size) {
+    if (size) {
+        *size = receiver->file_size;
+    }
+    return receiver->file_buffer;
+}
+
+/* ========== Cleanup ========== */
+
+void sr_sender_cleanup(sr_sender_t *sender) {
+    // File data is owned by caller, don't free
+    (void)sender;
+}
+
+void sr_receiver_cleanup(sr_receiver_t *receiver) {
+    if (receiver->file_buffer) {
+        free(receiver->file_buffer);
+        receiver->file_buffer = NULL;
+    }
+}
