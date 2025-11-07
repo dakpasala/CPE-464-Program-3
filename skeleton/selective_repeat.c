@@ -101,8 +101,18 @@ static void build_ack_packet(uint8_t *packet, uint32_t ack_num) {
     // - Fill in udp_header_t: msg_type=UDP_ACK, ack_num, data_len=0
     // - IMPORTANT: Convert ack_num to network byte order (htonl)
     // - Calculate checksum over header (remember: set checksum=0 first)
-    (void)packet;
-    (void)ack_num;
+    
+    udp_header_t *hdr = (udp_ack_selective_t *)packet;
+    hdr->msg_type = UDP_ACK;
+    hdr->flags = 0;
+    hdr->seq_num = 0;
+    hdr->ack_num = htonl(ack_num);
+    hdr->data_len = 0;
+    hdr->checksum = 0;
+    hdr->window = htons(WINDOW_SIZE);
+
+    uint16_t checksum = calculate_checksum(packet, sizeof(udp_header_t));
+    hdr->checksum = checksum;
 }
 
 /*
