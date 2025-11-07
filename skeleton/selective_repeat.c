@@ -239,9 +239,39 @@ int sr_sender_check_timeouts(sr_sender_t *sender, uint64_t now_ms) {
     // That's what makes this Selective Repeat, not Go-Back-N.
     //
     // Return: Number of packets retransmitted, or -1 on failure
-    (void)sender;
-    (void)now_ms;
-    return 0;
+    
+    int retransmissions = 0;
+
+    for (uint32_t seq = sender->base; seq < sender->next_seq; seq++) {
+        int idx = seq % WINDOW_SIZE;
+        send_window_entry_t *entry = &sender->window[idx];
+
+        if (entry->state != PKT_PENDING) continue;
+        if (entry->seq_num != seq) continue;
+
+        if (now_ms - entry->send_time_ms >= TIMEOUT_MS) {
+            if (entry->retries >= MAX_RETRIES) return -1;
+
+            uint8_t packet[sizeof(udp_header_t) + CHUNK_SIZE];
+            build_data_packet(packet, entry->seq_num, entry->data, entry->data_len);
+            size_t packet_len = sizeof(udp_header_t) + entry->data_len;
+
+            // if (sender->lossy_link)
+            //     lossy_send(sender->lossy_link, packet, packet_len,
+            //                (struct sockaddr *)&sender->peer_addr,
+            //                sizeof(sender->peer_addr));
+            // else
+            //     sendto(sender->udp_fd, packet, packet_len, 0,
+            //            (struct sockaddr *)&sender->peer_addr,
+            //            sizeof(sender->peer_addr));
+
+            entry->send_time_ms = now_ms;
+            entry->retries++;
+            retransmissions++;
+        }
+    }
+
+    return retransmissions;
 }
 
 /*
