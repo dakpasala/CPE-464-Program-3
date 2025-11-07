@@ -302,15 +302,29 @@ int sr_receiver_init(sr_receiver_t *receiver, int udp_fd,
     // - Initialize all window entries as not received
     //
     // The file_buffer will be filled in order as packets are received and the window slides
-    (void)receiver;
-    (void)udp_fd;
-    (void)peer_addr;
-    (void)file_size;
-    (void)num_chunks;
-    (void)lossy_link;
-    return 0;
-}
+    
+    memset(receiver, 0, sizeof(*receiver));
 
+    receiver->udp_fd = udp_fd;
+    memcpy(&receiver->peer_addr, peer_addr, sizeof(struct sockaddr_in));
+    receiver->file_size = file_size;
+    receiver->num_chunks = num_chunks;
+    receiver->lossy_link = lossy_link;                    
+    
+    receiver->file_buffer = malloc(file_size);
+
+    receiver->base = 0;
+    receiver->chunks_received = 0;
+
+    for (int i = 0; i < WINDOW_SIZE; i++) {
+        receiver->window[i].received = 0;
+        receiver->window[i].seq_num = 0;
+        receiver->window[i].data_len = 0;
+        memset(receiver->window[i].data, 0, CHUNK_SIZE);
+    }
+
+    return 0;
+}                        
 /*
  * Handle an incoming data packet.
  * Verify checksum, buffer if in window, send ACK, slide window if possible.
