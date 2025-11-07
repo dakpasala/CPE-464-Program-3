@@ -136,8 +136,44 @@ int sr_sender_send_window(sr_sender_t *sender) {
     // HINT: The window can hold WINDOW_SIZE packets at a time
     // HINT: Use get_time_ms() for timestamps
     // Return the number of new packets sent
-    (void)sender;
-    return 0;
+    
+    uint64_t now = get_time_ms();
+    int packets = 0;
+
+    while (sender->next_seq < sender->base + WINDOW_SIZE && sender->next_seq < sender->num_chunks) {
+        int idx = sender->next_seq % WINDOW_SIZE;
+
+        if (sender -> window[idx].state != PKT_EMPTY) break;
+
+        uint32_t offset = sender->next_seq * CHUNK_SIZE;
+        uint16_t chunk_len = (offset + CHUNK_SIZE > sender->file_size) ? (sender->file_size - offset) : CHUNK_SIZE;
+
+        uint8_t packet[sizeof(udp_header_t) + CHUNK_SIZE];
+        build_data_packet(packet, sender->next_seq, sender->file_data + offset, chunk_len);
+
+        ssize_t packet_len = sizeof(udp_header_t) + chunk_len;
+
+        // if (sender->lossy_link)
+        //     lossy_send(sender->lossy_link, packet, packet_len,
+        //             (struct sockaddr *)&sender->peer_addr,
+        //             sizeof(sender->peer_addr));
+        // else
+        //     sendto(sender->udp_fd, packet, packet_len, 0,
+        //         (struct sockaddr *)&sender->peer_addr,
+        //         sizeof(sender->peer_addr));
+
+        sender->window[idx].state = PKT_PENDING;
+        sender->window[idx].seq_num = sender->next_seq;
+        sender->window[idx].data_len = chunk_len;
+        sender->window[idx].send_time_ms = now;
+        sender->window[idx].retries = 0;
+        memcpy(sender->window[idx].data, sender->file_data + offset, chunk_len);
+
+        sender->next_seq++;
+        packets++;
+    }
+
+    return packets;
 }
 
 /*
