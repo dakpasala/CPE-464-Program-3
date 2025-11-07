@@ -280,7 +280,7 @@ int sr_sender_check_timeouts(sr_sender_t *sender, uint64_t now_ms) {
  */
 int sr_sender_is_complete(const sr_sender_t *sender) {
     // TODO: Check if all chunks have been acknowledged
-    (void)sender;
+    if(sender->chunks_acked == sender->num_chunks) return 1;
     return 0;
 }
 
