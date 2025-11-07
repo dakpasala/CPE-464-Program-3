@@ -31,12 +31,29 @@ int sr_sender_init(sr_sender_t *sender, int udp_fd,
     // - Calculate num_chunks (round up: how many CHUNK_SIZE blocks needed?)
     // - Initialize sequence number tracking (base and next_seq)
     // - Initialize all window entries to PKT_EMPTY state
-    (void)sender;
-    (void)udp_fd;
-    (void)peer_addr;
-    (void)file_data;
-    (void)file_size;
-    (void)lossy_link;
+    
+    memset(sender, 0, sizeof(*sender));
+
+    sender->udp_fd = udp_fd;
+    memcpy(&sender->peer_addr, peer_addr, sizeof(struct sockaddr_in));
+    sender->file_data = file_data;
+    sender->file_size = file_size;
+    sender->lossy_link = lossy_link;
+
+    sender->num_chunks = (file_size + CHUNK_SIZE + 1) / CHUNK_SIZE;
+
+    sender->base = 0;
+    sender->next_seq = 0;
+    sender->chunks_acked = 0;
+
+    for (int i = 0; i < WINDOW_SIZE; i++) {
+        sender->window[i].state = PKT_EMPTY;
+        sender->window[i].seq_num = 0;
+        sender->window[i].data_len = 0;
+        sender->window[i].send_time_ms = 0;
+        sender->window[i].retries = 0;
+    }
+
     return 0;
 }
 
