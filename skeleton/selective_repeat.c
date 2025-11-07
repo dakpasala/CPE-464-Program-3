@@ -75,10 +75,21 @@ static void build_data_packet(uint8_t *packet, uint32_t seq_num,
     //    - MUST set checksum field to 0 first
     //    - Use calculate_checksum() from protocol.h
     //    - Store result in checksum field
-    (void)packet;
-    (void)seq_num;
-    (void)data;
-    (void)data_len;
+    
+    udp_header_t *hdr = (udp_ack_selective_t *)packet;
+
+    hdr->msg_type = UDP_DATA;
+    hdr->flags = 0;
+    hdr->checksum = 0;
+    hdr->seq_num = htonl(seq_num);
+    hdr->ack_num = 0;         
+    hdr->data_len = htons(data_len);
+    hdr->window = htons(WINDOW_SIZE);      
+    
+    memcpy(packet + sizeof(udp_header_t), data, data_len);
+
+    uint16_t checksum = calculate_checksum(packet, sizeof(udp_header_t) + data_len);
+    hdr->checksum = checksum;
 }
 
 /*
