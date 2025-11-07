@@ -199,8 +199,25 @@ int sr_sender_handle_ack(sr_sender_t *sender, const udp_header_t *hdr) {
     //    - This allows new packets to be sent
     //
     // Think: Why does selective repeat only slide on consecutive ACKs?
-    (void)sender;
-    (void)hdr;
+    uint32_t ack_num = ntohl(hdr->ack_num);
+    if (ack_num < sender->base) return 0;
+
+    if (ack_num >= sender->base + WINDOW_SIZE || ack_num >= sender->num_chunks) return 0;
+
+    int idx = ack_num % WINDOW_SIZE;
+
+    if (sender->window[idx].state == PKT_PENDING && sender->window[idx].seq_num == ack_num) {
+        sender->window[idx].state = PKT_ACKED;
+        sender->chunks_acked++;
+    }
+
+    while (sender->base < sender->num_chunks) {
+        int base_idx = sender->base % WINDOW_SIZE;
+        if (sender->window[base_idx].state != PKT_ACKED) break;
+        sender->window[base_idx].state = PKT_EMPTY;
+        sender->base++;
+    }
+
     return 0;
 }
 
