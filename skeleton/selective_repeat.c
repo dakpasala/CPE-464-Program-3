@@ -14,6 +14,7 @@
 
 #include "selective_repeat.h"
 #include <string.h>
+#include <stdio.h>
 
 /* ========== Sender Implementation ========== */
 
@@ -40,7 +41,7 @@ int sr_sender_init(sr_sender_t *sender, int udp_fd,
     sender->file_size = file_size;
     sender->lossy_link = lossy_link;
 
-    sender->num_chunks = (file_size + CHUNK_SIZE + 1) / CHUNK_SIZE;
+    sender->num_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
 
     sender->base = 0;
     sender->next_seq = 0;
@@ -76,7 +77,7 @@ static void build_data_packet(uint8_t *packet, uint32_t seq_num,
     //    - Use calculate_checksum() from protocol.h
     //    - Store result in checksum field
     
-    udp_header_t *hdr = (udp_ack_selective_t *)packet;
+    udp_header_t *hdr = (udp_header_t *)packet;
 
     hdr->msg_type = UDP_DATA;
     hdr->flags = 0;
@@ -102,12 +103,12 @@ static void build_ack_packet(uint8_t *packet, uint32_t ack_num) {
     // - IMPORTANT: Convert ack_num to network byte order (htonl)
     // - Calculate checksum over header (remember: set checksum=0 first)
     
-    udp_header_t *hdr = (udp_ack_selective_t *)packet;
+    udp_header_t *hdr = (udp_header_t *)packet;
     hdr->msg_type = UDP_ACK;
     hdr->flags = 0;
-    hdr->seq_num = 0;
+    hdr->seq_num = htonl(0);
     hdr->ack_num = htonl(ack_num);
-    hdr->data_len = 0;
+    hdr->data_len = htons(0);
     hdr->checksum = 0;
     hdr->window = htons(WINDOW_SIZE);
 
@@ -153,14 +154,23 @@ int sr_sender_send_window(sr_sender_t *sender) {
 
         ssize_t packet_len = sizeof(udp_header_t) + chunk_len;
 
-        // if (sender->lossy_link)
-        //     lossy_send(sender->lossy_link, packet, packet_len,
-        //             (struct sockaddr *)&sender->peer_addr,
-        //             sizeof(sender->peer_addr));
-        // else
-        //     sendto(sender->udp_fd, packet, packet_len, 0,
-        //         (struct sockaddr *)&sender->peer_addr,
-        //         sizeof(sender->peer_addr));
+        if (sender->lossy_link) {
+            lossy_send(sender->lossy_link,
+                    packet,
+                    packet_len,
+                    0,
+                    (struct sockaddr *)&sender->peer_addr,
+                    sizeof(sender->peer_addr));
+        } 
+        else {
+            sendto(sender->udp_fd,
+                packet,
+                packet_len,
+                0,
+                (struct sockaddr *)&sender->peer_addr,
+                sizeof(sender->peer_addr));
+        }
+
 
         sender->window[idx].state = PKT_PENDING;
         sender->window[idx].seq_num = sender->next_seq;
@@ -201,6 +211,8 @@ int sr_sender_handle_ack(sr_sender_t *sender, const udp_header_t *hdr) {
     // Think: Why does selective repeat only slide on consecutive ACKs?
     uint32_t ack_num = ntohl(hdr->ack_num);
     if (ack_num < sender->base) return 0;
+
+    if (hdr->msg_type != UDP_ACK) return 0;
 
     if (ack_num >= sender->base + WINDOW_SIZE || ack_num >= sender->num_chunks) return 0;
 
@@ -256,14 +268,23 @@ int sr_sender_check_timeouts(sr_sender_t *sender, uint64_t now_ms) {
             build_data_packet(packet, entry->seq_num, entry->data, entry->data_len);
             size_t packet_len = sizeof(udp_header_t) + entry->data_len;
 
-            // if (sender->lossy_link)
-            //     lossy_send(sender->lossy_link, packet, packet_len,
-            //                (struct sockaddr *)&sender->peer_addr,
-            //                sizeof(sender->peer_addr));
-            // else
-            //     sendto(sender->udp_fd, packet, packet_len, 0,
-            //            (struct sockaddr *)&sender->peer_addr,
-            //            sizeof(sender->peer_addr));
+            if (sender->lossy_link) {
+                lossy_send(sender->lossy_link,
+                        packet,
+                        packet_len,
+                        0,
+                        (struct sockaddr *)&sender->peer_addr,
+                        sizeof(sender->peer_addr));
+            } 
+            else {
+                sendto(sender->udp_fd,
+                    packet,
+                    packet_len,
+                    0,
+                    (struct sockaddr *)&sender->peer_addr,
+                    sizeof(sender->peer_addr));
+            }
+
 
             entry->send_time_ms = now_ms;
             entry->retries++;
@@ -280,7 +301,7 @@ int sr_sender_check_timeouts(sr_sender_t *sender, uint64_t now_ms) {
  */
 int sr_sender_is_complete(const sr_sender_t *sender) {
     // TODO: Check if all chunks have been acknowledged
-    if(sender->chunks_acked == sender->num_chunks) return 1;
+    if(sender->chunks_acked >= sender->num_chunks) return 1;
     return 0;
 }
 
@@ -312,6 +333,10 @@ int sr_receiver_init(sr_receiver_t *receiver, int udp_fd,
     receiver->lossy_link = lossy_link;                    
     
     receiver->file_buffer = malloc(file_size);
+    if (!receiver->file_buffer) {
+        perror("malloc");
+        return -1;
+    }
 
     receiver->base = 0;
     receiver->chunks_received = 0;
@@ -358,17 +383,23 @@ int sr_receiver_handle_data(sr_receiver_t *receiver, const uint8_t *packet, size
     if (len < sizeof(udp_header_t)) return 0;
 
     udp_header_t hdr;
-    mempcy(&hdr, packet, sizeof(udp_header_t));
+    memcpy(&hdr, packet, sizeof(udp_header_t));
 
     uint16_t received_checksum = hdr.checksum;
-    ((udp_header_t *)packet)->checksum = 0;
-    uint16_t computed_checksum = calculate_checksum(packet, len);
-    ((udp_header_t *)packet)->checksum = received_checksum;
+
+    uint8_t temp[len];
+    memcpy(temp, packet, len);
+    ((udp_header_t *)temp)->checksum = 0;
+
+    uint16_t computed_checksum = calculate_checksum(temp, len);
 
     if (received_checksum != computed_checksum) return 0;
+    if (hdr.msg_type != UDP_DATA) return 0;
 
     uint32_t seq_num = ntohl(hdr.seq_num);
     uint16_t data_len = ntohs(hdr.data_len);
+    if (len < sizeof(udp_header_t) + data_len) return 0;
+
     const uint8_t *payload = packet + sizeof(udp_header_t);
 
     if (seq_num >= receiver->num_chunks) return 0;
@@ -420,7 +451,13 @@ int sr_receiver_send_ack(sr_receiver_t *receiver, uint32_t seq_num) {
     build_ack_packet(packet, seq_num);
 
     if (receiver->lossy_link) {
-      // lossy_send(receiver->lossy_link, packet, sizeof(packet), (struct sockaddr *)&receiver->peer_addr, sizeof(receiver->peer_addr));
+        lossy_send(receiver->lossy_link,
+           packet,
+           sizeof(packet),
+           0,
+           (struct sockaddr *)&receiver->peer_addr,
+           sizeof(receiver->peer_addr));
+
     }
     else sendto(receiver->udp_fd,
                packet,
