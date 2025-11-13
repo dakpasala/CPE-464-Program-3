@@ -416,8 +416,20 @@ int sr_receiver_send_ack(sr_receiver_t *receiver, uint32_t seq_num) {
     // TODO: Send ACK for the given sequence number
     // - Build an ACK packet using build_ack_packet()
     // - Send using lossy_send() if lossy_link is set, otherwise sendto()
-    (void)receiver;
-    (void)seq_num;
+    uint8_t packet[sizeof(udp_header_t)];
+    build_ack_packet(packet, seq_num);
+
+    if (receiver->lossy_link) {
+      // lossy_send(receiver->lossy_link, packet, sizeof(packet), (struct sockaddr *)&receiver->peer_addr, sizeof(receiver->peer_addr));
+    }
+    else sendto(receiver->udp_fd,
+               packet,
+               sizeof(packet),
+               0,
+               (struct sockaddr *)&receiver->peer_addr,
+               sizeof(receiver->peer_addr));
+    
+
     return 0;
 }
 
@@ -428,8 +440,8 @@ int sr_receiver_send_ack(sr_receiver_t *receiver, uint32_t seq_num) {
 int sr_receiver_is_complete(const sr_receiver_t *receiver) {
     // TODO: Check if all chunks have been received and delivered
     // HINT: When is the file complete? Think about base and num_chunks
-    (void)receiver;
-    return 0;
+   if (receiver->base >= receiver->num_chunks) return 1;
+   return 0;
 }
 
 /*
