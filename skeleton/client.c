@@ -32,8 +32,32 @@ int main(int argc, char *argv[]) {
     // You need to design and implement the entire client from scratch.
     // Refer to the assignment document and protocol.h for requirements.
 
-    printf("Client stub - not yet implemented\n");
-    printf("TODO: Implement the client functionality\n");
+    const char *server_ip = argv[1];
+    uint16_t server_port = (uint16_t)atoi(argv[2]);
+
+    int tcp_fd = create_tcp_socket();
+    if (tcp_fd < 0) {
+        fprintf(stderr, "TCP socket failed lol\n");
+        return 1;
+    }
+
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(server_port);
+
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1) {
+        fprintf(stderr, "ip address isn't valid: %s\n", server_ip);
+        return 1;
+    }
+
+    if (connect(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        fprintf(stderr, "couldn't connect to dir server: %s\n", strerror(errno));
+        close(tcp_fd);
+        return 1;
+    }
+
+    printf("conntect do dir server at %s:%u\n", server_ip, server_port);
 
     return 0;
 }
