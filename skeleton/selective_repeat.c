@@ -354,9 +354,58 @@ int sr_receiver_handle_data(sr_receiver_t *receiver, const uint8_t *packet, size
     //    - Advance base and free up window slots
     //
     // KEY INSIGHT: Why do we ACK duplicates? What happens if ACKs are lost?
-    (void)receiver;
-    (void)packet;
-    (void)len;
+    
+    if (len < sizeof(udp_header_t)) return 0;
+
+    udp_header_t hdr;
+    mempcy(&hdr, packet, sizeof(udp_header_t));
+
+    uint16_t received_checksum = hdr.checksum;
+    ((udp_header_t *)packet)->checksum = 0;
+    uint16_t computed_checksum = calculate_checksum(packet, len);
+    ((udp_header_t *)packet)->checksum = received_checksum;
+
+    if (received_checksum != computed_checksum) return 0;
+
+    uint32_t seq_num = ntohl(hdr.seq_num);
+    uint16_t data_len = ntohs(hdr.data_len);
+    const uint8_t *payload = packet + sizeof(udp_header_t);
+
+    if (seq_num >= receiver->num_chunks) return 0;
+
+    if (seq_num < receiver->base) {
+        sr_receiver_send_ack(receiver, seq_num);
+        return 0;
+    }
+
+    if (seq_num >= receiver->base + WINDOW_SIZE) return 0;
+
+    int index = seq_num % WINDOW_SIZE;
+    recv_window_entry_t *slot = &receiver->window[index];
+
+    if (!slot->received) {
+        slot->received = 1;
+        slot->seq_num = seq_num;
+        slot->data_len = data_len;
+        memcpy(slot->data, payload, data_len);
+        receiver->chunks_received++;
+    }
+
+    sr_receiver_send_ack(receiver, seq_num);
+
+    while (receiver->base < receiver->num_chunks) {
+        int base_idx = receiver->base % WINDOW_SIZE;
+        recv_window_entry_t *base_slot = &receiver->window[base_idx];
+
+        if (!base_slot->received) break;
+
+        uint32_t offset = receiver->base * CHUNK_SIZE;
+        memcpy(receiver->file_buffer + offset, base_slot->data, base_slot->data_len);
+
+        base_slot->received = 0;
+        receiver->base++;
+    }
+
     return 0;
 }
 
