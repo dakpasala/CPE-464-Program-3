@@ -424,11 +424,11 @@ Your client **must** implement an interactive command-line interface that accept
 Share a file with the network.
 
 **Behavior:**
-- Read the file from the local filesystem
-- Compute SHA-256 hash of the file contents
-- Send `TCP_SHARE_FILE` message to server with filename, size, and hash
-- Receive `TCP_SHARE_ACK` with assigned file_id
-- Print confirmation message
+- Read the file from the local filesystem (done)
+- Compute SHA-256 hash of the file contents (done)
+- Send `TCP_SHARE_FILE` message to server with filename, size, and hash (done)
+- Receive `TCP_SHARE_ACK` with assigned file_id (done)
+- Print confirmation message (done)
 
 **Example:**
 ```
