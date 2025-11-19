@@ -445,8 +445,8 @@ Share a file with the network.
 List all files available in the network.
 
 **Behavior:**
-- Send `TCP_LIST_FILES` message to server
-- Receive `TCP_FILE_LIST` response with array of file_info_t
+- Send `TCP_LIST_FILES` message to server (done)
+- Receive `TCP_FILE_LIST` response with array of file_info_t (done)
 - Display files in readable format showing:
   - File ID
   - Filename

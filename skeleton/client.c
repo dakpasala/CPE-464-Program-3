@@ -35,12 +35,14 @@ int share(int tcp_sock, const char *filename) {
     if (read_file_to_buffer(filename, &buff, &size) != 0){
         ERROR_PRINT("There was an error calling read_file_to_buffer");
         free(buff);
+        buff = NULL;
         return 1;
     }
 
     if (size > UINT32_MAX){
         ERROR_PRINT("The var size is too large");
         free(buff);
+        buff = NULL;
         return 1;
     }
 
@@ -52,6 +54,7 @@ int share(int tcp_sock, const char *filename) {
 
     // free the buffer from read_file_to_buffer()
     free(buff);
+    buff = NULL;
 
     // Send `TCP_SHARE_FILE` message to server with filename, size, and hash
     // copying the fields into the tcp_share_file_t struct
@@ -76,11 +79,13 @@ int share(int tcp_sock, const char *filename) {
         if (n_head < 0){
             ERROR_PRINT("send failed");
             free(buff);
+            buff = NULL;
             return 1;
         }
         else if (n_head == 0){
             ERROR_PRINT("Connection closed by peer");
             free(buff);
+            buff = NULL;
             return 1;
         }
 
@@ -96,11 +101,13 @@ int share(int tcp_sock, const char *filename) {
         if (n_message < 0){
             ERROR_PRINT("send failed");
             free(buff);
+            buff = NULL;
             return 1;
         }
         else if (n_message == 0){
             ERROR_PRINT("Connection closed by peer");
             free(buff);
+            buff = NULL;
             return 1;
         }
 
@@ -118,11 +125,13 @@ int share(int tcp_sock, const char *filename) {
         if (n_read < 0){
             ERROR_PRINT("read failed");
             free(buff);
+            buff = NULL;
             return 1;
         }
         else if (n_read == 0){
             ERROR_PRINT("Connection closed by peer");
             free(buff);
+            buff = NULL;
             return 1;
         }
 
@@ -134,6 +143,7 @@ int share(int tcp_sock, const char *filename) {
 
         ERROR_PRINT("There was an error: %u", response_header.error_code);
         free(buff);
+        buff = NULL;
         return 1;
     }
 
@@ -148,6 +158,7 @@ int share(int tcp_sock, const char *filename) {
 
         ERROR_PRINT("Expected %zu bytes but got %u", sizeof(tcp_share_ack_t), response_header.data_len);
         free(buff);
+        buff = NULL;
         return 1;
     }
 
@@ -161,11 +172,13 @@ int share(int tcp_sock, const char *filename) {
         if (n_share < 0){
             ERROR_PRINT("read failed");
             free(buff);
+            buff = NULL;
             return 1;
         }
         else if (n_share == 0){
             ERROR_PRINT("Connection closed by peer");
             free(buff);
+            buff = NULL;
             return 1;
         }
 
@@ -179,10 +192,123 @@ int share(int tcp_sock, const char *filename) {
     return 0;
 }
 
-int list(int sock) { 
+int list(int tcp_sock) { 
 
-    // need to check to see if the socket is available
+    // need to check to see if the socket is available (don't because you are passing in the socket)
+    // need to sned bytes from socket?
 
+    // Send `TCP_LIST_FILES` message to server
+    // first need to create the header and change the message flag to TCP_LIST_FILES
+    tcp_header_t tcp_send_message;
+    tcp_send_message.error_code = ERR_NONE;
+    tcp_send_message.msg_type = TCP_LIST_FILES;
+    tcp_send_message.data_len = 0;
+    ssize_t bytes_send_request = 0;
+    ssize_t n_sent = 0; 
+
+    while (bytes_send_request < sizeof(tcp_header_t)){
+
+        n_sent = send(tcp_sock, (uint8_t *) &(tcp_send_message) + bytes_send_request, sizeof(tcp_send_message) - bytes_send_request, 0);
+        if (n_sent < 0){
+            ERROR_PRINT("send failed");
+            return 1;
+        }
+        else if (n_sent == 0){
+            ERROR_PRINT("Connection closed by peer");
+            return 1;
+        }
+
+        bytes_send_request += n_sent;
+    }
+
+    // now need to see if the message type changed
+    tcp_header_t tcp_received_message;
+    ssize_t bytes_recv_request = 0;
+    ssize_t n_recv = 0; 
+
+    while (bytes_recv_request < (ssize_t)sizeof(tcp_received_message)){
+
+        n_recv = recv(tcp_sock, (uint8_t *) &(tcp_received_message) + bytes_recv_request, sizeof(tcp_received_message) - bytes_recv_request, 0);
+        if (n_recv < 0){
+            ERROR_PRINT("read failed");
+            return 1;
+        }
+        else if (n_recv == 0){
+            ERROR_PRINT("Connection closed by peer");
+            return 1;
+        }
+
+        bytes_recv_request += n_recv;
+    }
+
+
+    // safety check to see if there was an error
+    if (tcp_received_message.msg_type == TCP_ERROR){
+
+        ERROR_PRINT("There was an error: %u", tcp_received_message.error_code);
+        return 1;
+    }
+
+    // what to do: need to figure out how many fiels there are, loop through them, print them
+    // need to allocate a buffer size of data.len if it greater than 0
+    if (tcp_received_message.data_len > 0){
+
+        // allocating memory and checking if it was successful
+        uint8_t *buffer = malloc(tcp_received_message.data_len);
+        if (buffer == NULL){
+            free(buffer);
+            return 1;
+        }
+
+        // var declarations for reading from the socket
+        ssize_t bytes_read_dl = 0;
+        ssize_t n_dl = 0;
+
+        // condition for loop
+        while (bytes_read_dl < tcp_received_message.data_len){
+
+            n_dl = recv(tcp_sock, buffer + bytes_read_dl, tcp_received_message.data_len - bytes_read_dl, 0);
+            if (n_dl < 0){
+                ERROR_PRINT("read failed");
+                free(buffer);
+                buffer = NULL;
+                return 1;
+            }
+            else if (n_dl == 0){
+                ERROR_PRINT("Connection closed by peer");
+                free(buffer);
+                buffer = NULL;
+                return 1;
+            }
+
+            bytes_read_dl += n_dl;
+        }
+
+        // buffer now has the payload and I am casting it as a file_info_struct
+        file_info_t *file_info = (file_info_t*) buffer;
+
+        // have the number of files
+        size_t num_files = tcp_received_message.data_len / sizeof(file_info_t);
+        INFO_PRINT("=== Available Files ===");
+        for (size_t i = 0; i < num_files; i++){
+
+            // can add SHA 256 computation later
+            INFO_PRINT("File ID: %u, Filename: %s, File size %u, Num peers: %u", file_info->file_id, file_info->filename, file_info->file_size, file_info->num_peers);
+        }
+
+        // free buffer and point to NULL
+        free(buffer);
+        buffer = NULL;
+    }
+
+    // if there are no files available
+    else {
+
+        INFO_PRINT("=== Available Files ===\nNo files available");
+
+    }
+
+    return 0;
 }
 
 int get(int sock, const char *filename) { 
@@ -199,9 +325,9 @@ void quit(int sock) {
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s <server_ip> <server_port> [udp_port] [loss_rate]\n", argv[0]);
-        fprintf(stderr, "  udp_port:   UDP port to bind (default: random)\n");
-        fprintf(stderr, "  loss_rate:  Packet loss rate 0.0-1.0 (default: 0.0)\n");
+        ERROR_PRINT("Usage: %s <server_ip> <server_port> [udp_port] [loss_rate]", argv[0]);
+        ERROR_PRINT("udp_port:   UDP port to bind (default: random)");
+        ERROR_PRINT("  loss_rate:  Packet loss rate 0.0-1.0 (default: 0.0)");
         return 1;
     }
 
@@ -216,13 +342,13 @@ int main(int argc, char *argv[]) {
     // creating a socket and checking for failure
     int udp_fd = create_udp_socket();
     if (udp_fd < 0){
-        fprintf(stderr, "UDP socket failed\n");
+        ERROR_PRINT("UDP socket failed");
         return 1;
     }
 
     // checking the udp binding
     if (bind_socket(udp_port, udp_fd) < 0){
-        fprintf(stderr, "There was an error binding the udp port to the socket\n");
+        ERROR_PRINT("There was an error binding the udp port to the socket");
         close(udp_fd);
     }
 
@@ -232,7 +358,7 @@ int main(int argc, char *argv[]) {
         socklen_t addr_len = sizeof(addr);
         getsockname(udp_fd, (struct sockaddr*)&addr, &addr_len);
         udp_port = ntohs(addr.sin_port);
-        fprintf(stderr, "Bound the UDP socket to port %u\n", udp_port);
+        ERROR_PRINT("Bound the UDP socket to port %u", udp_port);
     }
 
 
@@ -249,7 +375,7 @@ int main(int argc, char *argv[]) {
 
     int tcp_fd = create_tcp_socket();
     if (tcp_fd < 0) {
-        fprintf(stderr, "TCP socket failed\n");
+        ERROR_PRINT("TCP socket failed");
         return 1;
     }
 
@@ -259,17 +385,17 @@ int main(int argc, char *argv[]) {
     server_addr.sin_port = htons(server_port);
 
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1) {
-        fprintf(stderr, "ip address isn't valid: %s\n", server_ip);
+        ERROR_PRINT("ip address isn't valid: %s", server_ip);
         return 1;
     }
 
     if (connect(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        fprintf(stderr, "couldn't connect to dir server: %s\n", strerror(errno));
+        ERROR_PRINT("couldn't connect to dir server: %s", strerror(errno));
         close(tcp_fd);
         return 1;
     }
 
-    printf("conntect do dir server at %s:%u\n", server_ip, server_port);
+    INFO_PRINT("conntect do dir server at %s:%u", server_ip, server_port);
 
     // implementing the user commands (share, list, get, quit)
 
