@@ -33,6 +33,11 @@ int sr_sender_init(sr_sender_t *sender, int udp_fd,
     // - Initialize sequence number tracking (base and next_seq)
     // - Initialize all window entries to PKT_EMPTY state
     
+    // checking to see if any of these are errors
+    id (sender == NULL || peer_addr == NULL || file_data == NULL || lossy_link == NULL){
+        return -1;
+    }
+
     memset(sender, 0, sizeof(*sender));
 
     sender->udp_fd = udp_fd;
@@ -138,6 +143,11 @@ int sr_sender_send_window(sr_sender_t *sender) {
     // HINT: Use get_time_ms() for timestamps
     // Return the number of new packets sent
     
+    if (sender == NULL){
+        ERROR_PRINT("The sender variable in sr_sender_send_window() is NULL");
+        return -1;
+    }
+
     uint64_t now = get_time_ms();
     int packets = 0;
 
@@ -324,6 +334,12 @@ int sr_receiver_init(sr_receiver_t *receiver, int udp_fd,
     //
     // The file_buffer will be filled in order as packets are received and the window slides
     
+    // if there is an error with the inputs
+    if(receiver == NULL || peer_addr == NULL || lossy_link == NULL){
+        ERROR_PRINT();
+        return -1;
+    }
+
     memset(receiver, 0, sizeof(*receiver));
 
     receiver->udp_fd = udp_fd;

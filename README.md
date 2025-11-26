@@ -503,11 +503,11 @@ Download a file from a peer.
 **Example (Hash Mismatch):**
 ```
 > get 1
-[INFO] Requesting file_id=1 from server
-[INFO] Peer location: 127.0.0.1:6002
-[INFO] Starting file transfer: test.txt (2048 bytes)
-[INFO] File transfer complete
-[ERROR] Hash mismatch!
+[INFO] Requesting file_id=1 from server (done)
+[INFO] Peer location: 127.0.0.1:6002 (done)
+[INFO] Starting file transfer: test.txt (2048 bytes) (done)
+[INFO] File transfer complete (done)
+[ERROR] Hash mismatch! 
 [ERROR]   Expected: a3f5d1e234b8c7f1...
 [ERROR]   Received: b4c8e2f345d9a8c2...
 [ERROR] File may be corrupted
