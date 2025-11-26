@@ -34,7 +34,7 @@ int sr_sender_init(sr_sender_t *sender, int udp_fd,
     // - Initialize all window entries to PKT_EMPTY state
     
     // checking to see if any of these are errors
-    id (sender == NULL || peer_addr == NULL || file_data == NULL || lossy_link == NULL){
+    if (sender == NULL || peer_addr == NULL || file_data == NULL || lossy_link == NULL){
         return -1;
     }
 
