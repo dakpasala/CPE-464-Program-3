@@ -776,7 +776,7 @@ int main(int argc, char *argv[]) {
         struct sockaddr_in addr;
         socklen_t addr_len = sizeof(addr);
         if (getsockname(udp_fd, (struct sockaddr*)&addr, &addr_len) == -1){
-
+            close(udp_fd);
             ERROR_PRINT("There was an error in getsockname()");
             return 1;
         }
@@ -798,9 +798,32 @@ int main(int argc, char *argv[]) {
     if (tcp_fd < 0) {
         ERROR_PRINT("TCP socket failed");
         close(udp_fd);
+        return 1;
+    }
+
+    // creating the IPv4 Socket
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(server_port);
+
+    // 
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1) {
+        ERROR_PRINT("ip address isn't valid: %s", server_ip);
+        close(udp_fd);
         close(tcp_fd);
         return 1;
     }
+
+    //
+    if (connect(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        ERROR_PRINT("couldn't connect to dir server: %s", strerror(errno));
+        close(tcp_fd);
+        close(udp_fd);
+        return 1;
+    }
+
+    INFO_PRINT("Conntected to directory server at %s:%u", server_ip, server_port);
 
     tcp_header_t tcp_header;
     tcp_header.data_len = sizeof(tcp_register_t);
@@ -822,8 +845,6 @@ int main(int argc, char *argv[]) {
         }
         else if (n_bytes_header == 0){
 
-            close(tcp_fd);
-            close(udp_fd);
             ERROR_PRINT("There was an error in the connection on the server side");
             return 1;
         }
@@ -849,8 +870,7 @@ int main(int argc, char *argv[]) {
         }
 
         else if (n_bytes_register == 0){
-            close(tcp_fd);
-            close(udp_fd);
+
             ERROR_PRINT("There was an error in the connection on the server side");
             return 1;
         }
@@ -875,8 +895,7 @@ int main(int argc, char *argv[]) {
         }
 
         else if (n_bytes_rec == 0){
-            close(tcp_fd);
-            close(udp_fd);
+
             ERROR_PRINT("There was an error in the connection on the server side");
             return 1;
         }
@@ -926,8 +945,6 @@ int main(int argc, char *argv[]) {
         else if (n_bytes_reg_ack == 0){
 
             ERROR_PRINT("here was an error in the connection on the server side for tcp_reg_ack");
-            close(tcp_fd);
-            close(udp_fd);
             return 1;
         }
 
@@ -937,28 +954,6 @@ int main(int argc, char *argv[]) {
     // here is the client id
     uint32_t client_id = tcp_reg_ack.client_id;
     INFO_PRINT("Connected to %u", client_id);
-
-    // creating the IPv4 Socket
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(server_port);
-
-    // 
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1) {
-        ERROR_PRINT("ip address isn't valid: %s", server_ip);
-        return 1;
-    }
-
-    //
-    if (connect(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        ERROR_PRINT("couldn't connect to dir server: %s", strerror(errno));
-        close(tcp_fd);
-        return 1;
-    }
-
-
-    INFO_PRINT("Conntect do dir server at %s:%u", server_ip, server_port);
 
     // implementing the user commands (share, list, get, quit)
 
@@ -971,11 +966,27 @@ int main(int argc, char *argv[]) {
 
     // flag for while loop condition
     int running = 1;
-    
+
     while (running) {
 
         // polling
-        poll(fds, 2, 100);  // 100ms timeout
+        int poll_fd = poll(fds, 2, 100);  // 100ms timeout
+
+        // error checking for poll
+        if (poll_fd < 0){
+
+            close(tcp_fd);
+            close(udp_fd);
+            ERROR_PRINT("There was an error in calling poll");
+            return 1;
+        }
+        else if (poll_fd == 0){
+
+            ERROR_PRINT("There was a called timeout and no file descriptors were ready");
+            close(tcp_fd);
+            close(udp_fd);
+            return 1;
+        }
 
         // need to check return type
 
@@ -989,7 +1000,6 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        running = 0;
         // ... handle UDP events ...
     }
 
