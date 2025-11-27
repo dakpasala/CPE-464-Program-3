@@ -581,7 +581,10 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
         sr_receiver_handle_data(&receiver, recv_buff, rec_len_sr);
     }
 
-    // print file
+    // clean up the receiver
+    sr_receiver_cleanup(&receiver);
+
+    // print file transfer complete
     INFO_PRINT("File transfer complete");
 
     // need to assemble the file via sr_receiver_get_file()
@@ -634,13 +637,50 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     }
 
     return 0;
-
 }
 
 void quit(int tcp_sock, int udp_sock) { 
 
+    // print shutting down
+    INFO_PRINT("Shutting down...");
 
+    // creating the tcp message to server
+    tcp_header_t tcp_send_header;
+    tcp_send_header.msg_type = TCP_UNREGISTER;
+    tcp_send_header.error_code = ERR_NONE;
+    tcp_send_header.data_len = 0;
 
+    // variables for send()
+    size_t bytes_sent = 0;
+    ssize_t n_sent = 0;
+
+    // iterating until the entire message is sent
+    while (bytes_sent < sizeof(tcp_header_t)){
+
+        n_sent = send(tcp_sock, (uint8_t *) &(tcp_send_header) + bytes_sent, sizeof(tcp_send_header) - bytes_sent, 0);
+
+        if (n_sent < 0){
+            ERROR_PRINT("send failed");
+            close(tcp_sock);
+            close(udp_sock);
+            return;
+        }
+        else if (n_sent == 0){
+            ERROR_PRINT("send failed");
+            close(tcp_sock);
+            close(udp_sock);
+            return;
+        }
+
+        bytes_sent += (size_t) n_sent;
+    }
+
+    close(tcp_sock);
+    close(udp_sock);
+
+    // printing successful error
+    INFO_PRINT("Unregistered from server");
+    return;
 }
 
 int main(int argc, char *argv[]) {
