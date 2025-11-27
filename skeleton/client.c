@@ -683,6 +683,72 @@ void quit(int tcp_sock, int udp_sock) {
     return;
 }
 
+void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_link){
+
+    if (line == NULL){
+        ERROR_PRINT("The line is empty, contains no characters");
+        return;
+
+    }
+
+    // 
+    line[strcspn(line, "\n")] = '\0';
+
+    // all the cases for share, list, get, quit, and invalid
+    if (strncmp(line, "share ", 6) == 0){
+        
+        // share() wants to be called
+
+        // pointing to the filename now
+        char* file_arg = line + 6;
+
+        // call share()
+        share(tcp_sock, file_arg);
+    }
+    else if (strcmp(line, "list") == 0){
+        
+        // call list()
+        list(tcp_sock);
+    }
+
+    else if (strncmp(line, "get ", 4) == 0){
+
+        // get() wants to be called
+
+        //variables for getting file_id
+        char* file_arg = line + 4;
+        char* end_ptr = NULL;
+
+        uint32_t file_id = strtoul(file_arg, &end_ptr, 10);
+
+        if (end_ptr == file_arg){
+            ERROR_PRINT("Invalid file ID");
+            return;
+        }
+
+        if (*end_ptr != '\0') {
+            ERROR_PRINT("Invalid file ID");
+            return;
+        }
+
+        // call get()
+        get(tcp_sock, udp_sock, file_id, lossy_link);
+
+    }
+    else if (strcmp(line, "quit") == 0){
+
+        // call quit()
+        quit(tcp_sock, udp_sock);
+
+    }
+    else {
+        // incorrect command, ask for valid command
+    }
+
+    return;
+
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         ERROR_PRINT("Usage: %s <server_ip> <server_port> [udp_port] [loss_rate]", argv[0]);
@@ -694,7 +760,6 @@ int main(int argc, char *argv[]) {
     // TODO: Implement client
     // You need to design and implement the entire client from scratch.
     // Refer to the assignment document and protocol.h for requirements.
-
 
     // configuring the udp port and creating a socket for udp
     uint16_t udp_port = (argc >= 4) ? (uint16_t)atoi(argv[3]): 0;
@@ -724,31 +789,34 @@ int main(int argc, char *argv[]) {
 
     // configuring the loss rate
     float loss_rate = (argc >= 5) ? atof(argv[4]) : 0.0f;
-
-    lossy_link_t lossy_link;
-    lossy_init(&lossy_link, udp_fd, loss_rate, time(NULL));
+    lossy_link_t* lossy_link;
+    lossy_init(lossy_link, udp_fd, loss_rate, time(NULL));
 
 
     // code for getting the tcp port
     const char *server_ip = argv[1];
     uint16_t server_port = (uint16_t)atoi(argv[2]);
 
+    // creating the tcp socket and checking it
     int tcp_fd = create_tcp_socket();
     if (tcp_fd < 0) {
         ERROR_PRINT("TCP socket failed");
         return 1;
     }
 
+    // creating the IPv4 Socket
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(server_port);
 
+    // 
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1) {
         ERROR_PRINT("ip address isn't valid: %s", server_ip);
         return 1;
     }
 
+    //
     if (connect(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         ERROR_PRINT("couldn't connect to dir server: %s", strerror(errno));
         close(tcp_fd);
@@ -759,7 +827,28 @@ int main(int argc, char *argv[]) {
 
     // implementing the user commands (share, list, get, quit)
 
-    
+    struct pollfd fds[2];
+    fds[0].fd = STDIN_FILENO;
+    fds[0].events = POLLIN;
+    fds[1].fd = udp_fd;
+    fds[1].events = POLLIN;
+
+    int running = 1;
+
+    while (running) {
+        poll(fds, 2, 100);  // 100ms timeout
+
+        if (fds[0].revents & POLLIN) {
+            char line[1024];
+            if (fgets(line, sizeof(line), stdin)) {
+                // Parse and handle command
+                handle_command(line, tcp_fd, udp_fd, lossy_link);
+                printf("> ");
+                fflush(stdout);
+            }
+        }
+        // ... handle UDP events ...
+    }
 
     return 0;
 }
