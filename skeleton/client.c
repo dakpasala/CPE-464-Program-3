@@ -311,7 +311,6 @@ int list(int tcp_sock) {
     return 0;
 }
 
-
 int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) { 
 // need to create a message to the server with a request file
 // need to check to see it was properly received
@@ -769,23 +768,26 @@ int main(int argc, char *argv[]) {
     if (bind_socket(udp_port, udp_fd) < 0){
         ERROR_PRINT("There was an error binding the udp port to the socket");
         close(udp_fd);
+        return 1;
     }
 
     // if udp_port is 0 figure out where it was assigned to 
     if (udp_port == 0){
         struct sockaddr_in addr;
         socklen_t addr_len = sizeof(addr);
-        getsockname(udp_fd, (struct sockaddr*)&addr, &addr_len);
+        if (getsockname(udp_fd, (struct sockaddr*)&addr, &addr_len) == -1){
+
+            ERROR_PRINT("There was an error in getsockname()");
+            return 1;
+        }
         udp_port = ntohs(addr.sin_port);
         ERROR_PRINT("Bound the UDP socket to port %u", udp_port);
     }
 
-
     // configuring the loss rate
     float loss_rate = (argc >= 5) ? atof(argv[4]) : 0.0f;
-    lossy_link_t* lossy_link;
-    lossy_init(lossy_link, udp_fd, loss_rate, time(NULL));
-
+    lossy_link_t lossy_link;
+    lossy_init(&lossy_link, udp_fd, loss_rate, time(NULL));
 
     // code for getting the tcp port
     const char *server_ip = argv[1];
@@ -795,8 +797,146 @@ int main(int argc, char *argv[]) {
     int tcp_fd = create_tcp_socket();
     if (tcp_fd < 0) {
         ERROR_PRINT("TCP socket failed");
+        close(udp_fd);
+        close(tcp_fd);
         return 1;
     }
+
+    tcp_header_t tcp_header;
+    tcp_header.data_len = sizeof(tcp_register_t);
+    tcp_header.error_code = ERR_NONE;
+    tcp_header.msg_type = TCP_REGISTER;
+
+    size_t bytes_header = 0;
+    ssize_t n_bytes_header = 0;
+
+    while (bytes_header < sizeof(tcp_header_t)){
+
+        n_bytes_header = send(tcp_fd, (uint8_t*) &(tcp_header) + bytes_header, sizeof(tcp_header) - bytes_header, 0);
+
+        if (n_bytes_header < 0){
+            close(tcp_fd);
+            close(udp_fd);
+            ERROR_PRINT("There was an error in sending bytes for register header");
+            return 1;
+        }
+        else if (n_bytes_header == 0){
+
+            close(tcp_fd);
+            close(udp_fd);
+            ERROR_PRINT("There was an error in the connection on the server side");
+            return 1;
+        }
+
+        bytes_header += (size_t) n_bytes_header;
+    }
+
+    tcp_register_t tcp_register;
+    tcp_register.udp_port = udp_port;
+
+    size_t bytes_register = 0;
+    ssize_t n_bytes_register = 0;
+
+    while (bytes_register < sizeof(tcp_register)){
+
+        n_bytes_register = send(tcp_fd, (uint8_t*) &(tcp_register) + bytes_register, sizeof(tcp_register) - bytes_register, 0);
+
+        if (n_bytes_register < 0){
+            close(tcp_fd);
+            close(udp_fd);
+            ERROR_PRINT("There was an error in the connection on the server side");
+            return 1;
+        }
+
+        else if (n_bytes_register == 0){
+            close(tcp_fd);
+            close(udp_fd);
+            ERROR_PRINT("There was an error in the connection on the server side");
+            return 1;
+        }
+
+        bytes_register += n_bytes_register;
+    }
+
+    tcp_header_t rec_header;
+
+    size_t bytes_rec_header = 0;
+    ssize_t n_bytes_rec = 0;
+
+    while (bytes_rec_header < sizeof(tcp_header_t)){
+
+        n_bytes_rec = recv(tcp_fd, (uint8_t *) &(rec_header) + bytes_rec_header, sizeof(rec_header) - bytes_rec_header, 0);
+
+        if (n_bytes_rec < 0){
+            close(tcp_fd);
+            close(udp_fd);
+            ERROR_PRINT("There was an error in the connection on the server side");
+            return 1;
+        }
+
+        else if (n_bytes_rec == 0){
+            close(tcp_fd);
+            close(udp_fd);
+            ERROR_PRINT("There was an error in the connection on the server side");
+            return 1;
+        }
+
+        bytes_rec_header += (size_t) n_bytes_rec;
+    }
+
+    if (rec_header.msg_type == TCP_ERROR){
+
+        ERROR_PRINT("The error code for the rec header in main is %u", rec_header.error_code);
+        close(tcp_fd);
+        close(udp_fd);
+        return 1;
+    }
+    else if (rec_header.msg_type != TCP_REGISTER_ACK){
+
+        ERROR_PRINT("The message received for the rec header in main is %u", rec_header.msg_type);
+        close(tcp_fd);
+        close(udp_fd);
+        return 1;
+    }
+
+    if (rec_header.data_len != sizeof(tcp_register_ack_t)){
+
+        ERROR_PRINT("There is a body size mismatch in the received header");
+        close(tcp_fd);
+        close(udp_fd);
+        return 1;
+    }
+
+    tcp_register_ack_t tcp_reg_ack;
+    
+    size_t bytes_reg_ack = 0;
+    ssize_t n_bytes_reg_ack = 0;
+
+    while (bytes_reg_ack < sizeof(tcp_register_ack_t)){
+
+        n_bytes_reg_ack = recv(tcp_fd, (uint8_t*) &(tcp_reg_ack) + bytes_reg_ack, sizeof(tcp_reg_ack) - bytes_reg_ack, 0);
+
+        if (n_bytes_reg_ack < 0){
+
+            ERROR_PRINT("There is an error from the server in main for tcp_reg_ack ");
+            close(tcp_fd);
+            close(udp_fd);
+            return 1;
+        }
+        else if (n_bytes_reg_ack == 0){
+
+            ERROR_PRINT("here was an error in the connection on the server side for tcp_reg_ack");
+            close(tcp_fd);
+            close(udp_fd);
+            return 1;
+        }
+
+        bytes_reg_ack += (size_t) n_bytes_reg_ack;
+    }
+
+    // here is the client id
+    uint32_t client_id = tcp_reg_ack.client_id;
+    INFO_PRINT("Connected to %u", client_id);
 
     // creating the IPv4 Socket
     struct sockaddr_in server_addr;
@@ -817,20 +957,27 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    INFO_PRINT("conntect do dir server at %s:%u", server_ip, server_port);
+
+    INFO_PRINT("Conntect do dir server at %s:%u", server_ip, server_port);
 
     // implementing the user commands (share, list, get, quit)
 
+    // var delcarations for polling
     struct pollfd fds[2];
     fds[0].fd = STDIN_FILENO;
     fds[0].events = POLLIN;
     fds[1].fd = udp_fd;
     fds[1].events = POLLIN;
 
+    // flag for while loop condition
     int running = 1;
-
+    
     while (running) {
+
+        // polling
         poll(fds, 2, 100);  // 100ms timeout
+
+        // need to check return type
 
         if (fds[0].revents & POLLIN) {
             char line[1024];
@@ -841,6 +988,8 @@ int main(int argc, char *argv[]) {
                 fflush(stdout);
             }
         }
+
+        running = 0;
         // ... handle UDP events ...
     }
 
