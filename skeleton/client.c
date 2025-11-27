@@ -685,13 +685,7 @@ void quit(int tcp_sock, int udp_sock) {
 
 void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_link){
 
-    if (line == NULL){
-        ERROR_PRINT("The line is empty, contains no characters");
-        return;
-
-    }
-
-    // 
+    // getting the input until the new line
     line[strcspn(line, "\n")] = '\0';
 
     // all the cases for share, list, get, quit, and invalid
@@ -743,10 +737,10 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
     }
     else {
         // incorrect command, ask for valid command
+        ERROR_PRINT("Incorrect command, ask for valid command");
     }
 
     return;
-
 }
 
 int main(int argc, char *argv[]) {
