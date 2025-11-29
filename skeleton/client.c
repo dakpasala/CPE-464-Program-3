@@ -358,57 +358,86 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
 // 
 
     // creating tcp header for server for requesting a file
-    tcp_header_t tcp_send_header;
-    tcp_send_header.msg_type = TCP_REQUEST_FILE;
-    tcp_send_header.error_code = ERR_NONE;
-    tcp_send_header.data_len = htons(sizeof(tcp_request_file_t));
+    // tcp_header_t tcp_send_header;
+    // tcp_send_header.msg_type = TCP_REQUEST_FILE;
+    // tcp_send_header.error_code = ERR_NONE;
+    // tcp_send_header.data_len = htons(sizeof(tcp_request_file_t));
 
     // var declarations for sending tcp_header
-    size_t bytes_sent = 0;
-    ssize_t n_sent = 0;
+    // size_t bytes_sent = 0;
+    // ssize_t n_sent = 0;
 
-    // iterating until the tcp header has been sent with checks
-    while (bytes_sent < sizeof(tcp_header_t)){
+    // // iterating until the tcp header has been sent with checks
+    // while (bytes_sent < sizeof(tcp_header_t)){
 
-        n_sent = send(tcp_sock, (uint8_t *) &(tcp_send_header) + bytes_sent, sizeof(tcp_send_header) - bytes_sent, 0);
+    //     n_sent = send(tcp_sock, (uint8_t *) &(tcp_send_header) + bytes_sent, sizeof(tcp_send_header) - bytes_sent, 0);
 
-        if (n_sent < 0){
-            ERROR_PRINT("send failed");
-            return 1;
-        }
-        else if (n_sent == 0){
-            ERROR_PRINT("send failed");
-            return 1;
-        }
+    //     if (n_sent < 0){
+    //         ERROR_PRINT("send failed");
+    //         return 1;
+    //     }
+    //     else if (n_sent == 0){
+    //         ERROR_PRINT("send failed");
+    //         return 1;
+    //     }
 
-        bytes_sent += n_sent;
-    }
+    //     bytes_sent += n_sent;
+    // }
 
     // creating request file struct to send to server
-    tcp_request_file_t req_file;
-    req_file.file_id = htonl(file_id);
+    // tcp_request_file_t req_file;
+    // req_file.file_id = htonl(file_id);
     
     // var declarations for sending tcp_request_file
-    size_t bytes_send_req = 0;
-    ssize_t n_send_req = 0;
+    // size_t bytes_send_req = 0;
+    // ssize_t n_send_req = 0;
 
-    // sending tcp_request_file to server with checks
-    while (bytes_send_req < sizeof(tcp_request_file_t)){
+    tcp_header_t tcp_send_header;
+    memset(&tcp_send_header, 0, sizeof(tcp_send_header));
+    tcp_send_header.msg_type   = TCP_REQUEST_FILE;
+    tcp_send_header.error_code = ERR_NONE;
+    tcp_send_header.data_len   = htons(sizeof(tcp_request_file_t));
 
-        n_send_req = send(tcp_sock, (uint8_t *) &(req_file) + bytes_send_req, sizeof(req_file) - bytes_send_req,0);
+    tcp_request_file_t req_file;
+    memset(&req_file, 0, sizeof(req_file));
+    req_file.file_id = htonl(file_id);
 
-        if (n_send_req < 0){
-            ERROR_PRINT();
+    uint8_t req_buf[sizeof(tcp_header_t) + sizeof(tcp_request_file_t)];
+    memcpy(req_buf, &tcp_send_header, sizeof(tcp_send_header));
+    memcpy(req_buf + sizeof(tcp_send_header), &req_file, sizeof(req_file));
+
+    ssize_t req_len = sizeof(req_buf);
+    ssize_t bytes_sent = 0;
+
+    while (bytes_sent < req_len) {
+        ssize_t n = send(tcp_sock, req_buf + bytes_sent, req_len - bytes_sent, 0);
+        if (n < 0) {
+            ERROR_PRINT("send TCP_REQUEST_FILE failed");
+            return 1;
+        } else if (n == 0) {
+            ERROR_PRINT("Connection closed by peer while sending TCP_REQUEST_FILE");
             return 1;
         }
-        else if (n_send_req == 0){
-            ERROR_PRINT();
-            return 1;
-        }
-
-        bytes_send_req += n_send_req;
-
+        bytes_sent += n;
     }
+
+    // // sending tcp_request_file to server with checks
+    // while (bytes_send_req < sizeof(tcp_request_file_t)){
+
+    //     n_send_req = send(tcp_sock, (uint8_t *) &(req_file) + bytes_send_req, sizeof(req_file) - bytes_send_req,0);
+
+    //     if (n_send_req < 0){
+    //         ERROR_PRINT();
+    //         return 1;
+    //     }
+    //     else if (n_send_req == 0){
+    //         ERROR_PRINT();
+    //         return 1;
+    //     }
+
+    //     bytes_send_req += n_send_req;
+
+    // }
 
     // creating tcp_header to read from server
     tcp_header_t tcp_receive_header;
@@ -513,19 +542,20 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     memcpy(udp_req_file.hash, rec_file.hash, sizeof(udp_req_file.hash));       // copying because it is an int array, not a pointer
 
     // creating a buffer to store the header and payload
-    uint16_t total_len = sizeof(udp_header_t) + sizeof(udp_request_file_t);
-    uint8_t buff [total_len];
+    uint16_t udp_len = sizeof(udp_header_t) + sizeof(udp_request_file_t);
+    uint8_t buff [udp_len];
+
     memcpy(buff, &udp_head, sizeof(udp_header_t));
     memcpy(buff + sizeof(udp_header_t), &udp_req_file, sizeof(udp_request_file_t));
 
     // calculating the checksum and putting that abck value into the buffer 
-    uint16_t check_sum = calculate_checksum(buff, total_len);
+    uint16_t check_sum = calculate_checksum(buff, udp_len);
     udp_header_t *buff_header = (udp_header_t*) buff;
     buff_header->checksum = check_sum;
 
     // sending datagram as one packet (header + payload)
     ssize_t udp_bytes_sent = 0;
-    udp_bytes_sent = sendto(udp_sock, buff, total_len, 0, (struct sockaddr *) &peer, sizeof(peer));
+    udp_bytes_sent = sendto(udp_sock, buff, udp_len, 0, (struct sockaddr *) &peer, sizeof(peer));
     
     // fill in later
     if (udp_bytes_sent < 0){
@@ -534,8 +564,8 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     }
 
     // fill in later
-    if (udp_bytes_sent != total_len){
-        ERROR_PRINT("Partial send of UDP_REQUEST_FILE (%zd of %u bytes)", udp_bytes_sent, total_len);
+    if (udp_bytes_sent != udp_len){
+        ERROR_PRINT("Partial send of UDP_REQUEST_FILE (%zd of %u bytes)", udp_bytes_sent, udp_len);
         return 1;
     }
 
