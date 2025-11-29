@@ -195,10 +195,11 @@ int list(int tcp_sock) {
     tcp_send_message.error_code = ERR_NONE;
     tcp_send_message.msg_type = TCP_LIST_FILES;
     tcp_send_message.data_len = 0;
+
     ssize_t bytes_send_request = 0;
     ssize_t n_sent = 0; 
 
-    while (bytes_send_request < sizeof(tcp_header_t)){
+    while (bytes_send_request < (ssize_t) sizeof(tcp_header_t)){
 
         n_sent = send(tcp_sock, (uint8_t *) &(tcp_send_message) + bytes_send_request, sizeof(tcp_send_message) - bytes_send_request, 0);
         if (n_sent < 0){
@@ -241,65 +242,72 @@ int list(int tcp_sock) {
         return 1;
     }
 
+    if (tcp_received_message.msg_type != TCP_FILE_LIST) {
+        ERROR_PRINT("Unexpected TCP message type: %u (expected TCP_FILE_LIST)", tcp_received_message.msg_type);
+        return 1;
+    }
+
+    INFO_PRINT("=== Available Files ===");
+
+    // No files case
+    if (tcp_received_message.data_len == 0) {
+        INFO_PRINT("No files available");
+        return 0;
+    }
+
+    // There is a payload with file_info_t array
+    if (tcp_received_message.data_len % sizeof(file_info_t) != 0) {
+        ERROR_PRINT("TCP_FILE_LIST data_len (%u) not a multiple of file_info_t (%zu)", tcp_received_message.data_len, sizeof(file_info_t));
+        return 1;
+    }
+
     // what to do: need to figure out how many fiels there are, loop through them, print them
     // need to allocate a buffer size of data.len if it greater than 0
-    if (tcp_received_message.data_len > 0){
 
-        // allocating memory and checking if it was successful
-        uint8_t *buffer = malloc(tcp_received_message.data_len);
-        if (buffer == NULL){
+    // allocating memory and checking if it was successful
+    uint8_t *buffer = malloc(tcp_received_message.data_len);
+    if (buffer == NULL){
+        return 1;
+    }
+
+    // var declarations for reading from the socket
+    ssize_t bytes_read_dl = 0;
+    ssize_t n_dl = 0;
+
+    // condition for loop
+    while (bytes_read_dl < (ssize_t) tcp_received_message.data_len){
+
+        n_dl = recv(tcp_sock, buffer + bytes_read_dl, tcp_received_message.data_len - bytes_read_dl, 0);
+        if (n_dl < 0){
+            ERROR_PRINT("read failed");
             free(buffer);
+            buffer = NULL;
+            return 1;
+        }
+        else if (n_dl == 0){
+            ERROR_PRINT("Connection closed by peer");
+            free(buffer);
+            buffer = NULL;
             return 1;
         }
 
-        // var declarations for reading from the socket
-        ssize_t bytes_read_dl = 0;
-        ssize_t n_dl = 0;
-
-        // condition for loop
-        while (bytes_read_dl < tcp_received_message.data_len){
-
-            n_dl = recv(tcp_sock, buffer + bytes_read_dl, tcp_received_message.data_len - bytes_read_dl, 0);
-            if (n_dl < 0){
-                ERROR_PRINT("read failed");
-                free(buffer);
-                buffer = NULL;
-                return 1;
-            }
-            else if (n_dl == 0){
-                ERROR_PRINT("Connection closed by peer");
-                free(buffer);
-                buffer = NULL;
-                return 1;
-            }
-
-            bytes_read_dl += n_dl;
-        }
-
-        // buffer now has the payload and I am casting it as a file_info_struct
-        file_info_t *file_info = (file_info_t*) buffer;
-
-        // have the number of files
-        size_t num_files = tcp_received_message.data_len / sizeof(file_info_t);
-        INFO_PRINT("=== Available Files ===");
-        for (size_t i = 0; i < num_files; i++){
-
-            // can add SHA 256 computation later
-            INFO_PRINT("File ID: %u, Filename: %s, File size %u, Num peers: %u", file_info->file_id, file_info->filename, file_info->file_size, file_info->num_peers);
-        }
-
-        // free buffer and point to NULL
-        free(buffer);
-        buffer = NULL;
+        bytes_read_dl += n_dl;
     }
 
-    // if there are no files available
-    else {
+    // buffer now has the payload and I am casting it as a file_info_struct
+    file_info_t *file_info = (file_info_t*) buffer;
 
-        INFO_PRINT("=== Available Files ===\nNo files available");
+    // have the number of files
+    size_t num_files = tcp_received_message.data_len / sizeof(file_info_t);
+    for (size_t i = 0; i < num_files; i++){
 
+        // can add SHA 256 computation later
+        INFO_PRINT("File ID: %u, Filename: %s, File size %u, Num peers: %u", file_info[i].file_id, file_info[i].filename, file_info[i].file_size, file_info[i].num_peers);
     }
 
+    // free buffer and point to NULL
+    free(buffer);
+    buffer = NULL;
     return 0;
 }
 
@@ -431,8 +439,8 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     }
 
     // adding it to receive_filename
-    strncpy(receive_filename, rec_file.filename, sizeof(receive_filename) - 1);
-    receive_filename[sizeof(receive_filename) - 1] = '\0';
+    // strncpy(receive_filename, rec_file.filename, sizeof(receive_filename) - 1);
+    // receive_filename[sizeof(receive_filename) - 1] = '\0';
 
     // need to do UDP peer to peer now
     struct sockaddr_in peer;
