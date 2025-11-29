@@ -16,9 +16,25 @@
 #include "common.h"
 #include "selective_repeat.h"
 #include "lossy_udp.h"
+#include "share_file_logic.h"
 #include <poll.h>
 #include <signal.h>
 #include <time.h>
+
+// global flag for loop
+volatile int running = 1;
+
+// gloabla vars for sender
+static sr_sender_t global_sender;
+static uint8_t* global_file_buffer = NULL;
+static int transfer_active = 0;
+
+// global vars for receiver
+static sr_sender_t global_receiver;
+static int receive_active = 0;
+static char receive_filename[256];
+static struct sockaddr_in receive_peer_adddres;
+
 
 int share(int tcp_sock, const char *filename) { 
 
@@ -46,8 +62,6 @@ int share(int tcp_sock, const char *filename) {
         return 1;
     }
 
-
-    // Compute SHA-256 hash of the file contents
     // computing the SHA256
     uint8_t hash[32];
     compute_sha256(buff, size, hash);
@@ -57,7 +71,6 @@ int share(int tcp_sock, const char *filename) {
     buff = NULL;
 
     // Send `TCP_SHARE_FILE` message to server with filename, size, and hash
-    // copying the fields into the tcp_share_file_t struct
     tcp_share_file_t tcp_message;
     tcp_message.file_size = (uint32_t) size;
     strncpy(tcp_message.filename, filename, 255);
@@ -70,7 +83,7 @@ int share(int tcp_sock, const char *filename) {
     tcp_head.data_len = sizeof(tcp_message);
     tcp_head.error_code = ERR_NONE;
 
-    // for the head
+    // sending the header
     ssize_t bytes_sent_head = 0;
     ssize_t n_head = 0;
     while (bytes_sent_head < (ssize_t)sizeof(tcp_head)){
@@ -78,14 +91,10 @@ int share(int tcp_sock, const char *filename) {
         n_head = send(tcp_sock, (uint8_t *) &(tcp_head) + bytes_sent_head, sizeof(tcp_head) - bytes_sent_head, 0);
         if (n_head < 0){
             ERROR_PRINT("send failed");
-            free(buff);
-            buff = NULL;
             return 1;
         }
         else if (n_head == 0){
             ERROR_PRINT("Connection closed by peer");
-            free(buff);
-            buff = NULL;
             return 1;
         }
 
@@ -100,20 +109,15 @@ int share(int tcp_sock, const char *filename) {
         n_message = send(tcp_sock, (uint8_t *) &(tcp_message) + bytes_sent_message, sizeof(tcp_message) - bytes_sent_message, 0);
         if (n_message < 0){
             ERROR_PRINT("send failed");
-            free(buff);
-            buff = NULL;
             return 1;
         }
         else if (n_message == 0){
             ERROR_PRINT("Connection closed by peer");
-            free(buff);
-            buff = NULL;
             return 1;
         }
 
         bytes_sent_message += n_message;
     }
-
 
     //- Receive `TCP_SHARE_ACK` with assigned file_id
     tcp_header_t response_header;
@@ -124,14 +128,10 @@ int share(int tcp_sock, const char *filename) {
         n_read = recv(tcp_sock, (uint8_t *) &(response_header) + bytes_read_message, sizeof(response_header) - bytes_read_message, 0);
         if (n_read < 0){
             ERROR_PRINT("read failed");
-            free(buff);
-            buff = NULL;
             return 1;
         }
         else if (n_read == 0){
             ERROR_PRINT("Connection closed by peer");
-            free(buff);
-            buff = NULL;
             return 1;
         }
 
@@ -140,25 +140,18 @@ int share(int tcp_sock, const char *filename) {
     
     // safety checks
     if (response_header.msg_type == TCP_ERROR){
-
         ERROR_PRINT("There was an error: %u", response_header.error_code);
-        free(buff);
-        buff = NULL;
         return 1;
     }
 
-    // if (response_header.msg_type != TCP_SHARE_ACK){
-
-    //     ERROR_PRINT("TCP msg type is not set to SHARE_ACK and this is the error code:");
-    //     free(buff);    
-    //     return 1;
-    // }
+    if (response_header.msg_type != TCP_SHARE_ACK){
+        ERROR_PRINT("TCP msg type is not set to SHARE_ACK and this is the error code: %u", response_header.msg_type);
+        return 1;
+    }
 
     if (response_header.data_len != sizeof(tcp_share_ack_t)){
 
         ERROR_PRINT("Expected %zu bytes but got %u", sizeof(tcp_share_ack_t), response_header.data_len);
-        free(buff);
-        buff = NULL;
         return 1;
     }
 
@@ -171,19 +164,18 @@ int share(int tcp_sock, const char *filename) {
         n_share = recv(tcp_sock, (uint8_t *) &(share_ack) + bytes_read_share, sizeof(share_ack) - bytes_read_share, 0);
         if (n_share < 0){
             ERROR_PRINT("read failed");
-            free(buff);
-            buff = NULL;
             return 1;
         }
         else if (n_share == 0){
             ERROR_PRINT("Connection closed by peer");
-            free(buff);
-            buff = NULL;
             return 1;
         }
 
         bytes_read_share += n_share;
     }
+
+    // saving the file locally
+    add_shared_file(share_ack.file_id, (uint32_t) size, hash, filename);
 
     // Print confirmation message
     INFO_PRINT("Shared file: %s (file_id=%u, size=%zu bytes)", filename, share_ack.file_id, size);
@@ -732,13 +724,13 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
 
         // call quit()
         quit(tcp_sock, udp_sock);
+        running = 0;
 
     }
     else {
         // incorrect command, ask for valid command
         ERROR_PRINT("Incorrect command, ask for valid command");
     }
-
     return;
 }
 
@@ -964,43 +956,239 @@ int main(int argc, char *argv[]) {
     fds[1].fd = udp_fd;
     fds[1].events = POLLIN;
 
-    // flag for while loop condition
-    int running = 1;
+    printf("> ");
 
     while (running) {
 
         // polling
-        int poll_fd = poll(fds, 2, 100);  // 100ms timeout
+        int poll_res = poll(fds, 2, 100);  // 100ms timeout
 
         // error checking for poll
-        if (poll_fd < 0){
+        if (poll_res < 0){
 
             close(tcp_fd);
             close(udp_fd);
             ERROR_PRINT("There was an error in calling poll");
             return 1;
         }
-        else if (poll_fd == 0){
 
-            ERROR_PRINT("There was a called timeout and no file descriptors were ready");
-            close(tcp_fd);
-            close(udp_fd);
-            return 1;
-        }
-
-        // need to check return type
-
+        // parsing the input and 
         if (fds[0].revents & POLLIN) {
             char line[1024];
             if (fgets(line, sizeof(line), stdin)) {
                 // Parse and handle command
-                handle_command(line, tcp_fd, udp_fd, lossy_link);
+                handle_command(line, tcp_fd, udp_fd, &lossy_link);
                 printf("> ");
                 fflush(stdout);
             }
         }
 
         // ... handle UDP events ...
+        // if there is a packet
+        if (fds[1].revents & POLLIN) {
+
+            size_t udp_len = CHUNK_SIZE + sizeof(udp_header_t);
+            uint8_t udp_buffer[udp_len];
+
+            struct sockaddr_in peer_addr;
+            socklen_t addr_len = sizeof(struct sockaddr_in);
+
+            ssize_t lossy_return = lossy_recv(&lossy_link, udp_buffer, udp_len, 0, (struct sockaddr*) &peer_addr, &addr_len);
+
+            if (lossy_return < 0){
+
+                ERROR_PRINT("There was an error reading from lossy_recv");
+                continue;            
+            }
+            else if (lossy_return == 0){
+
+                // change the message
+                ERROR_PRINT("If the peer has performed an orderly shutdown");
+                continue;
+            }
+
+            if (lossy_return < (ssize_t) sizeof(udp_header_t)){
+                ERROR_PRINT("There is a size mismatch");
+                continue;
+            }
+
+            // cast buffer to udp_header to check message types
+            udp_header_t* udp_header = (udp_header_t *) udp_buffer;
+
+            // 1) if true, I am the owner of the file
+            if (udp_header->msg_type == UDP_REQUEST_FILE){
+
+                // validate the packet length
+                if (lossy_return < (ssize_t) (sizeof(udp_header_t) + sizeof(udp_request_file_t))){
+
+                    ERROR_PRINT("There is a size mismatch for the lossy return");
+                    continue;
+                }
+
+                if (udp_header->data_len != sizeof(udp_request_file_t)){
+                    ERROR_PRINT("The UDP_REQUEST_FILE data_len is too small, ignore");
+                    continue;
+                }
+
+                // parse the body
+                udp_request_file_t* udp_request_file = (udp_request_file_t *)(udp_buffer + sizeof(udp_header_t));
+
+                // find the file by id and checking if it exists
+                shared_file_t *file = find_shared_file_by_id(udp_request_file->file_id);
+                if (file == NULL){
+                    ERROR_PRINT("Could not find the file: %u", udp_request_file->file_id);
+                    continue;
+                }
+                
+                // verifying the hash
+                if (memcmp(file->hash, udp_request_file->hash, 32) != 0) {
+                    ERROR_PRINT("Hash mismatch for file_id=%u, refusing transfer", udp_request_file->file_id);
+                    continue;
+                }
+
+                // opening the file and checking the return type
+                FILE* fp = fopen(file->file_name, "rb");
+                if (fp == NULL){
+                    ERROR_PRINT("There was an error opening the file on disk");
+                    continue;
+                }
+
+                // getting the actual size of the file
+                fseek(fp, 0, SEEK_END);
+                long actual_size = ftell(fp);
+                fseek(fp, 0, SEEK_SET);
+
+                // checking to see if the sizes match
+                if (actual_size != file->file_size){
+                    ERROR_PRINT("There was an a mismatch on copying the file size on disk");
+                    fclose(fp);
+                    continue;
+                }
+
+                // need to figure out the number of chunks
+                int num_chunks = (actual_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+
+                // building a UDP header
+                udp_header_t udp_header_start;
+                memset(&udp_header_start, 0, sizeof(udp_header_start));
+                udp_header_start.msg_type = UDP_FILE_START;
+                udp_header_start.flags = 0;
+                udp_header_start.seq_num = 0;
+                udp_header_start.ack_num = 0;
+                udp_header_start.data_len = sizeof(udp_file_start_t);
+                udp_header_start.window = WINDOW_SIZE;
+                udp_header_start.checksum = 0;
+
+                // building a UDP_FILE_START packet 
+                udp_file_start_t udp_file_start;
+                udp_file_start.file_size = (uint32_t) actual_size;
+                udp_file_start.num_chunks = num_chunks;
+
+                // storing the payload in the buffer
+                uint16_t start_payload_size = sizeof(udp_header_t) + sizeof(udp_file_start_t);
+                uint8_t buff[start_payload_size];
+
+                // copy the header
+                memcpy(buff, &udp_header_start, sizeof(udp_header_t));
+
+                // copy the body after the buffer
+                memcpy(buff + sizeof(udp_header_t), &udp_file_start, sizeof(udp_file_start_t));
+
+                // calculating checksum and storing in buffer pointer
+                uint16_t check_sum = calculate_checksum(buff, start_payload_size);
+                udp_header_t *buff_header = (udp_header_t *) buff;
+                buff_header->checksum = check_sum;
+
+                ssize_t n_sent_udp_start_file = 0;
+                n_sent_udp_start_file = sendto(udp_fd, buff, start_payload_size, 0, (struct sockaddr *)&peer_addr, addr_len);
+
+                // check errors
+                if (n_sent_udp_start_file < 0){
+                    ERROR_PRINT("sendto UDP_FILE_START failed");
+                    continue;               
+                }
+                if (n_sent_udp_start_file == 0){
+                    ERROR_PRINT("the connection timed out");
+                    continue;
+                }
+
+                // loading the file after request and checking return type of malloc
+                uint8_t *file_buffer = malloc(actual_size);
+                if (file_buffer == NULL){
+                    ERROR_PRINT("There was an error in malloc");
+                    fclose(fp);
+                    continue;
+                }
+
+                // reading from the fp and checking return type
+                size_t n_read = fread(file_buffer, 1, actual_size, fp);
+
+                // check to see if there is a size mismatch
+                if (n_read != (size_t) actual_size){
+                    ERROR_PRINT("There was an error in fread");
+                    free(file_buffer);
+                    fclose(fp);
+                    continue;
+                }
+
+                // closing the file pointer
+                fclose(fp);
+
+                // global sr state
+                int sr_init_res = sr_sender_init(&global_sender, udp_fd, &peer_addr, file_buffer,(uint32_t) actual_size, &lossy_link);
+
+                if (sr_init_res < 0){
+                    ERROR_PRINT("There was an error initializing sr");
+                    free(file_buffer);
+                    continue;
+                }
+
+                global_file_buffer = file_buffer;
+                transfer_active = 1;
+
+                sr_sender_send_window(&global_sender);
+            }
+            else if (udp_header->msg_type == UDP_ACK){
+
+                // if we are currently transferring
+                if (transfer_active){          
+                    sr_sender_handle_ack(&global_sender, udp_header);
+                }
+            }
+            else if (udp_header->msg_type == UDP_FILE_START){
+
+
+
+            }
+            else if (udp_header->msg_type)
+        }
+
+        // for selective repeat
+        if (transfer_active){
+
+            // send window
+            sr_sender_send_window(&global_sender);
+
+            // check for timeouts
+            uint64_t curr_ms = get_time_ms();
+            int res = sr_sender_check_timeouts(&global_sender, curr_ms);
+            if (res < 0){
+                ERROR_PRINT("sr_sender_check_timeouts exceeded max retries, aborting transfer");
+                free(global_file_buffer);
+                global_file_buffer = NULL;
+                transfer_active = 0;
+            }
+            // check to see if we are done transferring
+            else if (sr_sender_is_complete(&global_sender)){
+                INFO_PRINT("File is done transferring");
+                free(global_file_buffer);
+                global_file_buffer = NULL;
+                transfer_active = 0;
+            }
+            
+        }
+        
+        
     }
 
     return 0;
