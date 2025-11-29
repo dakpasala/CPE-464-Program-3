@@ -20,20 +20,17 @@
 #include <poll.h>
 #include <signal.h>
 #include <time.h>
+#include <ctype.h>
 
-// global flag for loop
+
+// INFO_PRINT("sizeof(tcp_file_location_t)= %zu", sizeof(tcp_file_location_t));
+// // global flag for loop
 volatile int running = 1;
 
 // gloabla vars for sender
 static sr_sender_t global_sender;
 static uint8_t* global_file_buffer = NULL;
 static int transfer_active = 0;
-
-// global vars for receiver
-// static sr_sender_t global_receiver;
-// static int receive_active = 0;
-// static char receive_filename[256];
-// static struct sockaddr_in receive_peer_adddres;
 
 
 int share(int tcp_sock, const char *filename) { 
@@ -45,15 +42,18 @@ int share(int tcp_sock, const char *filename) {
         return 1;
     }
 
+    DEBUG_PRINT("share(): starting, filename='%s'", filename);
+
     // reading the path here
     uint8_t* buff = NULL;
     size_t size = 0;
     if (read_file_to_buffer(filename, &buff, &size) != 0){
         ERROR_PRINT("There was an error calling read_file_to_buffer");
-        free(buff);
-        buff = NULL;
         return 1;
     }
+
+    DEBUG_PRINT("share(): read_file_to_buffer ok, size=%zu", size);
+
 
     if (size > UINT32_MAX){
         ERROR_PRINT("The var size is too large");
@@ -65,6 +65,7 @@ int share(int tcp_sock, const char *filename) {
     // computing the SHA256
     uint8_t hash[32];
     compute_sha256(buff, size, hash);
+    DEBUG_PRINT("share(): computed SHA-256");
 
     // free the buffer from read_file_to_buffer()
     free(buff);
@@ -72,52 +73,83 @@ int share(int tcp_sock, const char *filename) {
 
     // Send `TCP_SHARE_FILE` message to server with filename, size, and hash
     tcp_share_file_t tcp_message;
-    tcp_message.file_size = (uint32_t) size;
+    memset(&tcp_message, 0, sizeof(tcp_message));
+    tcp_message.file_size = htonl((uint32_t) size);
     strncpy(tcp_message.filename, filename, 255);
     tcp_message.filename[255] = '\0';
     memcpy(tcp_message.hash, hash, sizeof(tcp_message.hash));
 
     // tcp message type
     tcp_header_t tcp_head;
+    memset(&tcp_head, 0, sizeof(tcp_head));
     tcp_head.msg_type = TCP_SHARE_FILE;
-    tcp_head.data_len = sizeof(tcp_message);
+    tcp_head.data_len = htons(sizeof(tcp_message));
     tcp_head.error_code = ERR_NONE;
 
-    // sending the header
-    ssize_t bytes_sent_head = 0;
-    ssize_t n_head = 0;
-    while (bytes_sent_head < (ssize_t)sizeof(tcp_head)){
+    DEBUG_PRINT("share(): sizeof(tcp_share_file_t) = %zu", sizeof(tcp_share_file_t));
+    DEBUG_PRINT("share(): header.data_len (host)   = %u", (unsigned)sizeof(tcp_message));
+    DEBUG_PRINT("share(): header.data_len (net)    = 0x%04x", ntohs(tcp_head.data_len));
 
-        n_head = send(tcp_sock, (uint8_t *) &(tcp_head) + bytes_sent_head, sizeof(tcp_head) - bytes_sent_head, 0);
-        if (n_head < 0){
+
+    // // sending the header
+    // ssize_t bytes_sent_head = 0;
+    // ssize_t n_head = 0;
+    // while (bytes_sent_head < (ssize_t)sizeof(tcp_head)){
+
+    //     n_head = send(tcp_sock, (uint8_t *) &(tcp_head) + bytes_sent_head, sizeof(tcp_head) - bytes_sent_head, 0);
+    //     if (n_head < 0){
+    //         ERROR_PRINT("send failed");
+    //         return 1;
+    //     }
+    //     else if (n_head == 0){
+    //         ERROR_PRINT("Connection closed by peer");
+    //         return 1;
+    //     }
+
+    //     bytes_sent_head += n_head;
+    // }    
+
+    // DEBUG_PRINT("share(): header sent");
+
+    // // send the message (need to loop until all bytes are sent from the message)
+    // ssize_t bytes_sent_message = 0;
+    // ssize_t n_message = 0;
+    // while (bytes_sent_message < (ssize_t)sizeof(tcp_message)){
+
+    //     n_message = send(tcp_sock, (uint8_t *) &(tcp_message) + bytes_sent_message, sizeof(tcp_message) - bytes_sent_message, 0);
+    //     if (n_message < 0){
+    //         ERROR_PRINT("send failed");
+    //         return 1;
+    //     }
+    //     else if (n_message == 0){
+    //         ERROR_PRINT("Connection closed by peer");
+    //         return 1;
+    //     }
+
+    //     bytes_sent_message += n_message;
+    // }
+
+    // Build a single contiguous buffer: [tcp_header_t][tcp_share_file_t]
+    uint8_t out_buf[sizeof(tcp_header_t) + sizeof(tcp_share_file_t)];
+    memcpy(out_buf, &tcp_head, sizeof(tcp_head));
+    memcpy(out_buf + sizeof(tcp_head), &tcp_message, sizeof(tcp_message));
+
+    ssize_t total_len = sizeof(out_buf);
+    ssize_t bytes_sent = 0;
+
+    while (bytes_sent < total_len) {
+        ssize_t n = send(tcp_sock, out_buf + bytes_sent, total_len - bytes_sent, 0);
+        if (n < 0) {
             ERROR_PRINT("send failed");
             return 1;
-        }
-        else if (n_head == 0){
+        } else if (n == 0) {
             ERROR_PRINT("Connection closed by peer");
             return 1;
         }
-
-        bytes_sent_head += n_head;
-    }    
-
-    // send the message (need to loop until all bytes are sent from the message)
-    ssize_t bytes_sent_message = 0;
-    ssize_t n_message = 0;
-    while (bytes_sent_message < (ssize_t)sizeof(tcp_message)){
-
-        n_message = send(tcp_sock, (uint8_t *) &(tcp_message) + bytes_sent_message, sizeof(tcp_message) - bytes_sent_message, 0);
-        if (n_message < 0){
-            ERROR_PRINT("send failed");
-            return 1;
-        }
-        else if (n_message == 0){
-            ERROR_PRINT("Connection closed by peer");
-            return 1;
-        }
-
-        bytes_sent_message += n_message;
+        bytes_sent += n;
     }
+
+    DEBUG_PRINT("share(): header and body sent, waiting for SHARE_ACK header");
 
     //- Receive `TCP_SHARE_ACK` with assigned file_id
     tcp_header_t response_header;
@@ -149,9 +181,10 @@ int share(int tcp_sock, const char *filename) {
         return 1;
     }
 
-    if (response_header.data_len != sizeof(tcp_share_ack_t)){
+    uint16_t body_len = ntohs(response_header.data_len);
+    if (body_len != sizeof(tcp_share_ack_t)){
 
-        ERROR_PRINT("Expected %zu bytes but got %u", sizeof(tcp_share_ack_t), response_header.data_len);
+        ERROR_PRINT("Expected %zu bytes but got %u", sizeof(tcp_share_ack_t), body_len);
         return 1;
     }
 
@@ -175,10 +208,11 @@ int share(int tcp_sock, const char *filename) {
     }
 
     // saving the file locally
-    add_shared_file(share_ack.file_id, (uint32_t) size, hash, (char*) filename);
+    uint32_t file_id = ntohl(share_ack.file_id);
+    add_shared_file(file_id, (uint32_t) size, hash, (char*) filename);
 
     // Print confirmation message
-    INFO_PRINT("Shared file: %s (file_id=%u, size=%zu bytes)", filename, share_ack.file_id, size);
+    INFO_PRINT("Shared file: %s (file_id=%u, size=%zu bytes)", filename, file_id, size);
 
     // return success
     return 0;
@@ -194,7 +228,7 @@ int list(int tcp_sock) {
     tcp_header_t tcp_send_message;
     tcp_send_message.error_code = ERR_NONE;
     tcp_send_message.msg_type = TCP_LIST_FILES;
-    tcp_send_message.data_len = 0;
+    tcp_send_message.data_len = htons(0);
 
     ssize_t bytes_send_request = 0;
     ssize_t n_sent = 0; 
@@ -250,14 +284,15 @@ int list(int tcp_sock) {
     INFO_PRINT("=== Available Files ===");
 
     // No files case
-    if (tcp_received_message.data_len == 0) {
+    uint16_t body_len = ntohs(tcp_received_message.data_len);
+    if (body_len == 0) {
         INFO_PRINT("No files available");
         return 0;
     }
 
     // There is a payload with file_info_t array
-    if (tcp_received_message.data_len % sizeof(file_info_t) != 0) {
-        ERROR_PRINT("TCP_FILE_LIST data_len (%u) not a multiple of file_info_t (%zu)", tcp_received_message.data_len, sizeof(file_info_t));
+    if (body_len % sizeof(file_info_t) != 0) {
+        ERROR_PRINT("TCP_FILE_LIST data_len (%u) not a multiple of file_info_t (%zu)", body_len, sizeof(file_info_t));
         return 1;
     }
 
@@ -265,7 +300,7 @@ int list(int tcp_sock) {
     // need to allocate a buffer size of data.len if it greater than 0
 
     // allocating memory and checking if it was successful
-    uint8_t *buffer = malloc(tcp_received_message.data_len);
+    uint8_t *buffer = malloc(body_len);
     if (buffer == NULL){
         return 1;
     }
@@ -275,9 +310,9 @@ int list(int tcp_sock) {
     ssize_t n_dl = 0;
 
     // condition for loop
-    while (bytes_read_dl < (ssize_t) tcp_received_message.data_len){
+    while (bytes_read_dl < (ssize_t) body_len){
 
-        n_dl = recv(tcp_sock, buffer + bytes_read_dl, tcp_received_message.data_len - bytes_read_dl, 0);
+        n_dl = recv(tcp_sock, buffer + bytes_read_dl, body_len - bytes_read_dl, 0);
         if (n_dl < 0){
             ERROR_PRINT("read failed");
             free(buffer);
@@ -298,11 +333,15 @@ int list(int tcp_sock) {
     file_info_t *file_info = (file_info_t*) buffer;
 
     // have the number of files
-    size_t num_files = tcp_received_message.data_len / sizeof(file_info_t);
+    size_t num_files = body_len / sizeof(file_info_t);
     for (size_t i = 0; i < num_files; i++){
 
+        uint32_t id    = ntohl(file_info[i].file_id);
+        uint32_t size  = ntohl(file_info[i].file_size);
+        uint16_t peers = ntohs(file_info[i].num_peers);
+
         // can add SHA 256 computation later
-        INFO_PRINT("File ID: %u, Filename: %s, File size %u, Num peers: %u", file_info[i].file_id, file_info[i].filename, file_info[i].file_size, file_info[i].num_peers);
+        INFO_PRINT("File ID: %u, Filename: %s, File size %u, Num peers: %u", id, file_info[i].filename, size, peers);
     }
 
     // free buffer and point to NULL
@@ -322,7 +361,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     tcp_header_t tcp_send_header;
     tcp_send_header.msg_type = TCP_REQUEST_FILE;
     tcp_send_header.error_code = ERR_NONE;
-    tcp_send_header.data_len = sizeof(tcp_request_file_t);
+    tcp_send_header.data_len = htons(sizeof(tcp_request_file_t));
 
     // var declarations for sending tcp_header
     size_t bytes_sent = 0;
@@ -347,7 +386,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
 
     // creating request file struct to send to server
     tcp_request_file_t req_file;
-    req_file.file_id = file_id;
+    req_file.file_id = htonl(file_id);
     
     // var declarations for sending tcp_request_file
     size_t bytes_send_req = 0;
@@ -403,9 +442,10 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
         ERROR_PRINT("Unexpected message type: %u", tcp_receive_header.msg_type);
         return 1;
     }
-    if (tcp_receive_header.data_len != sizeof(tcp_file_location_t)){
+    uint16_t body_len = ntohs(tcp_receive_header.data_len);
+    if (body_len != sizeof(tcp_file_location_t)){
 
-        ERROR_PRINT("Invalid TCP_FILE_LOCATION: expected %zu bytes, got %u", sizeof(tcp_file_location_t), tcp_receive_header.data_len);
+        ERROR_PRINT("Invalid TCP_FILE_LOCATION: expected %zu bytes, got %u", sizeof(tcp_file_location_t), body_len);
         return 1;
     }
 
@@ -432,12 +472,15 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
         bytes_read_file +=n_read_file;
     }
 
-    // fill in later
-    if (file_id != rec_file.file_id){
-        ERROR_PRINT("Server responded with different file_id (got %u, expected %u)", rec_file.file_id, file_id);
+    uint32_t loc_file_id = ntohl(rec_file.file_id);
+    uint32_t file_size = ntohl(rec_file.file_size);
+    uint16_t peer_port = ntohs(rec_file.peer_port);
+
+    // checking if the ids match
+    if (file_id != loc_file_id) {
+        ERROR_PRINT("Server responded with different file_id (got %u, expected %u)", loc_file_id, file_id);
         return 1;
     }
-
     // adding it to receive_filename
     // strncpy(receive_filename, rec_file.filename, sizeof(receive_filename) - 1);
     // receive_filename[sizeof(receive_filename) - 1] = '\0';
@@ -445,13 +488,13 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     // need to do UDP peer to peer now
     struct sockaddr_in peer;
     memset(&peer, 0, sizeof(peer));
-    peer.sin_port = rec_file.peer_port;
+    peer.sin_port = htons(peer_port);
     peer.sin_addr.s_addr = rec_file.peer_ip;
     peer.sin_family = AF_INET;
 
     INFO_PRINT("Requesting file_id=%u", file_id);
-    INFO_PRINT("Peer location: %s:%u", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port));
-    INFO_PRINT("Starting file transfer: %s (%u bytes)", rec_file.filename, rec_file.file_size);
+    INFO_PRINT("Peer location: %s:%u", inet_ntoa(peer.sin_addr), peer_port);
+    INFO_PRINT("Starting file transfer: %s (%u bytes)", rec_file.filename, file_size);
     
     // building UDP header
     udp_header_t udp_head;
@@ -460,13 +503,13 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     udp_head.flags = 0;
     udp_head.seq_num = 0;
     udp_head.ack_num = 0;
-    udp_head.data_len = sizeof(udp_request_file_t);
-    udp_head.window = WINDOW_SIZE;
+    udp_head.data_len = htons(sizeof(udp_request_file_t));
+    udp_head.window = htons(WINDOW_SIZE);
     udp_head.checksum = 0;  // temporairily
 
     // building the payload for request file
     udp_request_file_t udp_req_file;
-    udp_req_file.file_id = file_id;
+    udp_req_file.file_id = htonl(file_id);
     memcpy(udp_req_file.hash, rec_file.hash, sizeof(udp_req_file.hash));       // copying because it is an int array, not a pointer
 
     // creating a buffer to store the header and payload
@@ -571,11 +614,14 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     udp_file_start_t* start = (udp_file_start_t*) (recv_buff + sizeof(udp_header_t));
     sr_receiver_t receiver;
 
+    uint32_t start_file_size = ntohl(start->file_size);
+    uint32_t start_chunks = ntohl(start->num_chunks);
+
     // need to print requesting info
     // INFO_PRINT("Requesting file_id=%u from server", file_id);
     // INFO_PRINT("Peer location: %s:%u", inet_ntoa(peer.sin_addr), ntohs(peer.sin_port));
     // vars and structs for selective repeat:
-    if (sr_receiver_init(&receiver, udp_sock, &peer, start->file_size, start->num_chunks, lossy_link) != 0){
+    if (sr_receiver_init(&receiver, udp_sock, &peer, start_file_size, start_chunks, lossy_link) != 0){
         ERROR_PRINT();
         sr_receiver_cleanup(&receiver);
         return 1;
@@ -675,6 +721,13 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
 
 void quit(int tcp_sock) { 
 
+    INFO_PRINT("sizeof(tcp_header_t)       = %zu", sizeof(tcp_header_t));
+    INFO_PRINT("sizeof(tcp_share_file_t)  = %zu", sizeof(tcp_share_file_t));
+    INFO_PRINT("sizeof(tcp_share_ack_t)   = %zu", sizeof(tcp_share_ack_t));
+    INFO_PRINT("sizeof(tcp_register_t)    = %zu", sizeof(tcp_register_t));
+    INFO_PRINT("sizeof(tcp_register_ack_t)= %zu", sizeof(tcp_register_ack_t));
+    INFO_PRINT("sizeof(tcp_request_file_t)= %zu", sizeof(tcp_request_file_t));
+
     // print shutting down
     INFO_PRINT("Shutting down...");
 
@@ -682,7 +735,7 @@ void quit(int tcp_sock) {
     tcp_header_t tcp_send_header;
     tcp_send_header.msg_type = TCP_UNREGISTER;
     tcp_send_header.error_code = ERR_NONE;
-    tcp_send_header.data_len = 0;
+    tcp_send_header.data_len = htons(0);
 
     // variables for send()
     size_t bytes_sent = 0;
@@ -714,63 +767,91 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
 
     // getting the input until the new line
     line[strcspn(line, "\n")] = '\0';
+    
+    // Skip leading whitespace
+    char *p = line;
+    while (*p && isspace((unsigned char)*p)) {
+        p++;
+    }
+
+    // if empty line, return
+    if (*p == '\0') {
+        return;
+    }
+
+    // Parse command and optional argument
+    char cmd[16];
+    char arg[512];
+    arg[0] = '\0';
+
+    int n = sscanf(p, "%15s %511[^\n]", cmd, arg);
+    // n == 1 → only command
+    // n >= 2 → command + argument
 
     // all the cases for share, list, get, quit, and invalid
-    if (strncmp(line, "share ", 6) == 0){
-        
-        // share() wants to be called
+    if (strcmp(cmd, "share") == 0) {
 
-        // pointing to the filename now
-        char* file_arg = line + 6;
+        if (n < 2 || arg[0] == '\0') {
+            ERROR_PRINT("Usage: share <filepath>");
+            return;
+        }
 
-        // call share()
-        share(tcp_sock, file_arg);
+        // Optional: trim leading spaces from arg
+        char *fname = arg;
+        while (*fname && isspace((unsigned char)*fname)) {
+            fname++;
+        }
+        if (*fname == '\0') {
+            ERROR_PRINT("Usage: share <filepath>");
+            return;
+        }
+
+        share(tcp_sock, fname);
+        return;
     }
-    else if (strcmp(line, "list") == 0){
+
+    if (n == 1 && (strcmp(cmd, "list") == 0)){
         
         // call list()
         list(tcp_sock);
+        return;
     }
 
-    else if (strncmp(line, "get ", 4) == 0){
+    if (strcmp(cmd, "get") == 0) {
 
-        // get() wants to be called
+        if (n < 2 || arg[0] == '\0') {
+            ERROR_PRINT("Usage: get <file_id>");
+            return;
+        }
 
-        //variables for getting file_id
-        char* file_arg = line + 4;
-        char* end_ptr = NULL;
+        char *end_ptr = NULL;
+        unsigned long val = strtoul(arg, &end_ptr, 10);
 
-        uint32_t file_id = strtoul(file_arg, &end_ptr, 10);
-
-        if (end_ptr == file_arg){
+        if (end_ptr == arg || *end_ptr != '\0') {
             ERROR_PRINT("Invalid file ID");
             return;
         }
 
-        if (*end_ptr != '\0') {
-            ERROR_PRINT("Invalid file ID");
-            return;
-        }
-
-        // call get()
+        uint32_t file_id = (uint32_t)val;
         get(tcp_sock, udp_sock, file_id, lossy_link);
-
+        return;
     }
-    else if (strcmp(line, "quit") == 0){
+
+    if (n == 1 && (strcmp(cmd, "quit") == 0)){
 
         // call quit()
         quit(tcp_sock);
         running = 0;
+        return;
+    }
 
-    }
-    else {
-        // incorrect command, ask for valid command
-        ERROR_PRINT("Incorrect command, ask for valid command");
-    }
+    // incorrect command, ask for valid command
+    ERROR_PRINT("Incorrect command, ask for valid command");
     return;
 }
 
 int main(int argc, char *argv[]) {
+
     if (argc < 3) {
         ERROR_PRINT("Usage: %s <server_ip> <server_port> [udp_port] [loss_rate]", argv[0]);
         ERROR_PRINT("udp_port:   UDP port to bind (default: random)");
@@ -855,7 +936,7 @@ int main(int argc, char *argv[]) {
 
     // Send TCP_REGISTER
     tcp_header_t tcp_header;
-    tcp_header.data_len = sizeof(tcp_register_t);
+    tcp_header.data_len = htons(sizeof(tcp_register_t));
     tcp_header.error_code = ERR_NONE;
     tcp_header.msg_type = TCP_REGISTER;
 
@@ -882,7 +963,7 @@ int main(int argc, char *argv[]) {
     }
 
     tcp_register_t tcp_register;
-    tcp_register.udp_port = udp_port;
+    tcp_register.udp_port = htons(udp_port);
 
     size_t bytes_register = 0;
     ssize_t n_bytes_register = 0;
@@ -947,7 +1028,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (rec_header.data_len != sizeof(tcp_register_ack_t)){
+    uint16_t body_len = ntohs(rec_header.data_len);
+    if (body_len != sizeof(tcp_register_ack_t)){
 
         ERROR_PRINT("There is a body size mismatch in the received header");
         close(tcp_fd);
@@ -981,7 +1063,7 @@ int main(int argc, char *argv[]) {
     }
 
     // here is the client id
-    uint32_t client_id = tcp_reg_ack.client_id;
+    uint32_t client_id = ntohl(tcp_reg_ack.client_id);
     INFO_PRINT("Connected to %u", client_id);
 
     // implementing the user commands (share, list, get, quit)
@@ -1068,16 +1150,17 @@ int main(int argc, char *argv[]) {
                 // parse the body
                 udp_request_file_t* udp_request_file = (udp_request_file_t *)(udp_buffer + sizeof(udp_header_t));
 
+                uint32_t req_file_id = ntohl(udp_request_file->file_id);
                 // find the file by id and checking if it exists
-                shared_file_t *file = find_shared_file_by_id(udp_request_file->file_id);
+                shared_file_t *file = find_shared_file_by_id(req_file_id );
                 if (file == NULL){
-                    ERROR_PRINT("Could not find the file: %u", udp_request_file->file_id);
+                    ERROR_PRINT("Could not find the file: %u", req_file_id );
                     continue;
                 }
                 
                 // verifying the hash
                 if (memcmp(file->hash, udp_request_file->hash, 32) != 0) {
-                    ERROR_PRINT("Hash mismatch for file_id=%u, refusing transfer", udp_request_file->file_id);
+                    ERROR_PRINT("Hash mismatch for file_id=%u, refusing transfer", req_file_id );
                     continue;
                 }
 
@@ -1111,13 +1194,13 @@ int main(int argc, char *argv[]) {
                 // udp_header_start.seq_num = 0;
                 // udp_header_start.ack_num = 0;
                 udp_header_start.data_len = htons(sizeof(udp_file_start_t));
-                udp_header_start.window = WINDOW_SIZE;
+                udp_header_start.window = htons(WINDOW_SIZE);
                 udp_header_start.checksum = 0;
 
                 // building a UDP_FILE_START packet 
                 udp_file_start_t udp_file_start;
-                udp_file_start.file_size = (uint32_t) actual_size;
-                udp_file_start.num_chunks = num_chunks;
+                udp_file_start.file_size = htonl((uint32_t) actual_size);
+                udp_file_start.num_chunks = htonl((uint32_t)num_chunks);
 
                 // storing the payload in the buffer
                 uint16_t start_payload_size = sizeof(udp_header_t) + sizeof(udp_file_start_t);
