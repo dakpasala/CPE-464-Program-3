@@ -9,7 +9,10 @@ static uint64_t xs64(uint64_t *s){
 
 void lossy_init(lossy_link_t *l, int fd, double loss, uint64_t seed){
     l->fd = fd; l->loss = loss; l->rng = seed ? seed : 88172645463393265ULL;
-    if (l->loss < 0.0) l->loss = 0.0; if (l->loss > 1.0) l->loss = 1.0;
+    if (l->loss < 0.0) 
+        l->loss = 0.0; 
+    if (l->loss > 1.0) 
+        l->loss = 1.0;
 }
 
 ssize_t lossy_send(lossy_link_t *l,

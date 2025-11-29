@@ -175,7 +175,7 @@ int share(int tcp_sock, const char *filename) {
     }
 
     // saving the file locally
-    add_shared_file(share_ack.file_id, (uint32_t) size, hash, filename);
+    add_shared_file(share_ack.file_id, (uint32_t) size, hash, (char*) filename);
 
     // Print confirmation message
     INFO_PRINT("Shared file: %s (file_id=%u, size=%zu bytes)", filename, share_ack.file_id, size);
@@ -325,7 +325,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     tcp_send_header.data_len = sizeof(tcp_request_file_t);
 
     // var declarations for sending tcp_header
-    ssize_t bytes_sent = 0;
+    size_t bytes_sent = 0;
     ssize_t n_sent = 0;
 
     // iterating until the tcp header has been sent with checks
@@ -350,7 +350,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     req_file.file_id = file_id;
     
     // var declarations for sending tcp_request_file
-    ssize_t bytes_send_req = 0;
+    size_t bytes_send_req = 0;
     ssize_t n_send_req = 0;
 
     // sending tcp_request_file to server with checks
@@ -375,7 +375,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     tcp_header_t tcp_receive_header;
 
     // initializing vars for reading from server
-    ssize_t bytes_read = 0;
+    size_t bytes_read = 0;
     ssize_t n_read = 0;
 
     // iterating until all the data is in the tcp_header
@@ -413,7 +413,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     tcp_file_location_t rec_file;
 
     // initializing vars for reading from server
-    ssize_t bytes_read_file = 0;
+    size_t bytes_read_file = 0;
     ssize_t n_read_file = 0;
 
     // iterating until all the data is in the struct for tcp file location
@@ -516,7 +516,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     }
 
     // fill in later
-    if (rec_len < sizeof(udp_header_t)){
+    if (rec_len <  (ssize_t) sizeof(udp_header_t)){
         ERROR_PRINT();
         return 1;
     }  
@@ -526,7 +526,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     uint16_t data_len = ntohs(rec_udp_header->data_len);
 
     // checking
-    if (rec_len < sizeof(udp_header_t) + data_len) {
+    if (rec_len < (ssize_t) (sizeof(udp_header_t) + data_len)) {
         // header says there's N bytes of data, but packet is shorter
         ERROR_PRINT();
         return 1;
@@ -673,7 +673,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     return 0;
 }
 
-void quit(int tcp_sock, int udp_sock) { 
+void quit(int tcp_sock) { 
 
     // print shutting down
     INFO_PRINT("Shutting down...");
@@ -759,7 +759,7 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
     else if (strcmp(line, "quit") == 0){
 
         // call quit()
-        quit(tcp_sock, udp_sock);
+        quit(tcp_sock);
         running = 0;
 
     }
@@ -793,7 +793,7 @@ int main(int argc, char *argv[]) {
     }
 
     // checking the udp binding
-    if (bind_socket(udp_port, udp_fd) < 0){
+    if (bind_socket(udp_fd, udp_port) < 0){
         ERROR_PRINT("There was an error binding the udp port to the socket");
         close(udp_fd);
         return 1;

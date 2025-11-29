@@ -42,7 +42,7 @@ int sr_sender_init(sr_sender_t *sender, int udp_fd,
 
     sender->udp_fd = udp_fd;
     memcpy(&sender->peer_addr, peer_addr, sizeof(struct sockaddr_in));
-    sender->file_data = file_data;
+    sender->file_data =  (uint8_t *) file_data;
     sender->file_size = file_size;
     sender->lossy_link = lossy_link;
 
