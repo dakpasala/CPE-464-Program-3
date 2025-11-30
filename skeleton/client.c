@@ -511,10 +511,20 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     }
 
     // checking sender
-    if (sender_addr.sin_addr.s_addr != rec_file.peer_ip || sender_addr.sin_port != rec_file.peer_port){
-        ERROR_PRINT("Received UDP packet from unexpected sender: %s:%u (expected %s:%u)", inet_ntoa(sender_addr.sin_addr), ntohs(sender_addr.sin_port), inet_ntoa(*(struct in_addr*)&rec_file.peer_ip), peer_port);
+    if (sender_addr.sin_addr.s_addr != rec_file.peer_ip ||
+        sender_addr.sin_port != rec_file.peer_port) {
+
+        struct in_addr expected_addr;
+        expected_addr.s_addr = rec_file.peer_ip;
+
+        ERROR_PRINT("Received UDP packet from unexpected sender: %s:%u (expected %s:%u)",
+            inet_ntoa(sender_addr.sin_addr),
+            ntohs(sender_addr.sin_port),
+            inet_ntoa(expected_addr),
+            peer_port);
         return 1;
     }
+
 
     // checking message type
     if (rec_udp_header->msg_type != UDP_FILE_START){
