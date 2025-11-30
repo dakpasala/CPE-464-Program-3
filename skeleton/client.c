@@ -177,70 +177,67 @@ int share(int tcp_sock, const char *filename) {
 
 int list(int tcp_sock) { 
 
-    // need to check to see if the socket is available (don't because you are passing in the socket)
-    // need to sned bytes from socket?
-
-    // Send `TCP_LIST_FILES` message to server
     // first need to create the header and change the message flag to TCP_LIST_FILES
     tcp_header_t tcp_send_message;
     tcp_send_message.error_code = ERR_NONE;
     tcp_send_message.msg_type = TCP_LIST_FILES;
     tcp_send_message.data_len = htons(0);
 
+    // vars for send()
     ssize_t bytes_send_request = 0;
     ssize_t n_sent = 0; 
 
+    // iterating until all the packets have been sent and checking return type for each packet
     while (bytes_send_request < (ssize_t) sizeof(tcp_header_t)){
 
         n_sent = send(tcp_sock, (uint8_t *) &(tcp_send_message) + bytes_send_request, sizeof(tcp_send_message) - bytes_send_request, 0);
         if (n_sent < 0){
-            ERROR_PRINT("send failed");
+            ERROR_PRINT("Failed to send TCP_LIST_FILES header: %s", strerror(errno));
             return 1;
         }
         else if (n_sent == 0){
-            ERROR_PRINT("Connection closed by peer");
+            ERROR_PRINT("Server closed the TCP connection while sending TCP_LIST_FILES header");
             return 1;
         }
 
         bytes_send_request += n_sent;
     }
 
-    // now need to see if the message type changed
+    //vars for receiving the header
     tcp_header_t tcp_received_message;
     ssize_t bytes_recv_request = 0;
     ssize_t n_recv = 0; 
 
+    // iterating until al the packets have been received and checking return type for each packet
     while (bytes_recv_request < (ssize_t)sizeof(tcp_received_message)){
 
         n_recv = recv(tcp_sock, (uint8_t *) &(tcp_received_message) + bytes_recv_request, sizeof(tcp_received_message) - bytes_recv_request, 0);
         if (n_recv < 0){
-            ERROR_PRINT("read failed");
+            ERROR_PRINT("recv() failed while reading payload for TCP_FILE_LIST: %s", strerror(errno));
             return 1;
         }
         else if (n_recv == 0){
-            ERROR_PRINT("Connection closed by peer");
+            ERROR_PRINT("Server closed the TCP connection while reading TCP_FILE_LIST payload");
             return 1;
         }
 
         bytes_recv_request += n_recv;
     }
 
-
-    // safety check to see if there was an error
+    // safety check to see if there was an error in the message type for the received header
     if (tcp_received_message.msg_type == TCP_ERROR){
-
         ERROR_PRINT("There was an error: %u", tcp_received_message.error_code);
         return 1;
     }
-
     if (tcp_received_message.msg_type != TCP_FILE_LIST) {
         ERROR_PRINT("Unexpected TCP message type: %u (expected TCP_FILE_LIST)", tcp_received_message.msg_type);
         return 1;
     }
 
+    // printing available files
     INFO_PRINT("=== Available Files ===");
 
-    // No files case
+    // No files avaiable case
     uint16_t body_len = ntohs(tcp_received_message.data_len);
     if (body_len == 0) {
         INFO_PRINT("No files available");
@@ -253,9 +250,6 @@ int list(int tcp_sock) {
         return 1;
     }
 
-    // what to do: need to figure out how many fiels there are, loop through them, print them
-    // need to allocate a buffer size of data.len if it greater than 0
-
     // allocating memory and checking if it was successful
     uint8_t *buffer = malloc(body_len);
     if (buffer == NULL){
@@ -266,18 +260,18 @@ int list(int tcp_sock) {
     ssize_t bytes_read_dl = 0;
     ssize_t n_dl = 0;
 
-    // condition for loop
+    // condition for loop (reading the payload anc checking for errors)
     while (bytes_read_dl < (ssize_t) body_len){
 
         n_dl = recv(tcp_sock, buffer + bytes_read_dl, body_len - bytes_read_dl, 0);
         if (n_dl < 0){
-            ERROR_PRINT("read failed");
+            ERROR_PRINT("recv() failed while reading TCP_FILE_LIST payload: %s", strerror(errno));
             free(buffer);
             buffer = NULL;
             return 1;
         }
         else if (n_dl == 0){
-            ERROR_PRINT("Connection closed by peer");
+            ERROR_PRINT("Server closed the TCP connection while sending TCP_FILE_LIST payload");
             free(buffer);
             buffer = NULL;
             return 1;
@@ -293,15 +287,16 @@ int list(int tcp_sock) {
     size_t num_files = body_len / sizeof(file_info_t);
     for (size_t i = 0; i < num_files; i++){
 
-        uint32_t id    = ntohl(file_info[i].file_id);
-        uint32_t size  = ntohl(file_info[i].file_size);
+        // casting to ensure endianess
+        uint32_t id = ntohl(file_info[i].file_id);
+        uint32_t size = ntohl(file_info[i].file_size);
         uint16_t peers = ntohs(file_info[i].num_peers);
 
-        // can add SHA 256 computation later
+        // printing the info for available files
         INFO_PRINT("File ID: %u, Filename: %s, File size %u, Num peers: %u", id, file_info[i].filename, size, peers);
     }
 
-    // free buffer and point to NULL
+    // free buffer and point to NULL and successfully returning
     free(buffer);
     buffer = NULL;
     return 0;
@@ -641,13 +636,6 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
 
 void quit(int tcp_sock) { 
 
-    INFO_PRINT("sizeof(tcp_header_t)       = %zu", sizeof(tcp_header_t));
-    INFO_PRINT("sizeof(tcp_share_file_t)  = %zu", sizeof(tcp_share_file_t));
-    INFO_PRINT("sizeof(tcp_share_ack_t)   = %zu", sizeof(tcp_share_ack_t));
-    INFO_PRINT("sizeof(tcp_register_t)    = %zu", sizeof(tcp_register_t));
-    INFO_PRINT("sizeof(tcp_register_ack_t)= %zu", sizeof(tcp_register_ack_t));
-    INFO_PRINT("sizeof(tcp_request_file_t)= %zu", sizeof(tcp_request_file_t));
-
     // print shutting down
     INFO_PRINT("Shutting down...");
 
@@ -661,7 +649,7 @@ void quit(int tcp_sock) {
     size_t bytes_sent = 0;
     ssize_t n_sent = 0;
 
-    // iterating until the entire message is sent
+    // iterating until the entire message is sent and checking for error for each packet
     while (bytes_sent < sizeof(tcp_header_t)){
 
         n_sent = send(tcp_sock, (uint8_t *) &(tcp_send_header) + bytes_sent, sizeof(tcp_send_header) - bytes_sent, 0);
@@ -704,19 +692,20 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
     char arg[512];
     arg[0] = '\0';
 
+    // n == 1 → only command and n >= 2 → command + argument
     int n = sscanf(p, "%15s %511[^\n]", cmd, arg);
-    // n == 1 → only command
-    // n >= 2 → command + argument
 
-    // all the cases for share, list, get, quit, and invalid
+
+    // checking cmd = "share"
     if (strcmp(cmd, "share") == 0) {
 
+        // checking for error
         if (n < 2 || arg[0] == '\0') {
             ERROR_PRINT("Usage: share <filepath>");
             return;
         }
 
-        // Optional: trim leading spaces from arg
+        // getting rid of leading spaces (was having issues before)
         char *fname = arg;
         while (*fname && isspace((unsigned char)*fname)) {
             fname++;
@@ -726,40 +715,48 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
             return;
         }
 
+        // calling share and then returning back to loop
         share(tcp_sock, fname);
         return;
     }
 
+    // checking cmd = "list"
     if (n == 1 && (strcmp(cmd, "list") == 0)){
         
-        // call list()
+        // call list() and then returning back to loop
         list(tcp_sock);
         return;
     }
 
+    // checking cmd = "get"
     if (strcmp(cmd, "get") == 0) {
 
+        // checking for error
         if (n < 2 || arg[0] == '\0') {
             ERROR_PRINT("Usage: get <file_id>");
             return;
         }
 
+        // converting the argument to a value
         char *end_ptr = NULL;
         unsigned long val = strtoul(arg, &end_ptr, 10);
 
+        // if there is an invalid file id
         if (end_ptr == arg || *end_ptr != '\0') {
             ERROR_PRINT("Invalid file ID");
             return;
         }
 
+        // casting to uint32_t and calling get(), returning after call
         uint32_t file_id = (uint32_t)val;
         get(tcp_sock, udp_sock, file_id, lossy_link);
         return;
     }
 
+    // checking cmd = "quit"
     if (n == 1 && (strcmp(cmd, "quit") == 0)){
 
-        // call quit()
+        // call quit(), turning the flag off for the main loop, and returning
         quit(tcp_sock);
         running = 0;
         return;
