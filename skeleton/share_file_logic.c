@@ -3,35 +3,33 @@
 
 #include <string.h>
 
-static shared_file_t local_shared_files[MAX_SHARED_FILES];
-static size_t local_shared_file_count = 0;
+static shared_file_t table[MAX_SHARED_FILES];
+static int num_files = 0;
 
-void add_shared_file(uint32_t file_id, uint32_t file_size, uint8_t hash[32], char* file_name){
-
-    if (local_shared_file_count >= MAX_SHARED_FILES){
-        ERROR_PRINT("Table is full, can't add");
+void add_shared_file(uint32_t file_id, uint32_t size, uint8_t hash[32], char *filename)
+{
+    if (num_files >= MAX_SHARED_FILES) {
+        ERROR_PRINT("Shared file table full");
         return;
     }
 
-    shared_file_t* entry = &local_shared_files[local_shared_file_count++];
-
-    entry->file_id = file_id;
-    entry->file_size = file_size;
-
-    memcpy(entry->hash, hash, 32);
-    strncpy(entry->file_name, file_name, sizeof(entry->file_name) - 1);
-    entry->file_name[sizeof(entry->file_name) - 1] = '\0';
+    table[num_files].file_id = file_id;
+    table[num_files].file_size = size;
+    memcpy(table[num_files].hash, hash, 32);
+    strncpy(table[num_files].file_name, filename, sizeof(table[num_files].file_name)-1);
+    table[num_files].file_name[sizeof(table[num_files].file_name)-1] = '\0';
+    num_files++;
 }
 
-shared_file_t *find_shared_file_by_id(uint32_t file_id){
 
-    for (size_t i = 0; i < local_shared_file_count; i++){
-
-        if (local_shared_files->file_id == file_id){
-            return &local_shared_files[i];
+shared_file_t* find_shared_file_by_id(uint32_t file_id)
+{
+    for (int i = 0; i < num_files; i++) {
+        if (table[i].file_id == file_id) {
+            return &table[i];
         }
     }
-
     return NULL;
 }
+
 

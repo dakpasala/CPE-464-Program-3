@@ -864,6 +864,8 @@ int main(int argc, char *argv[]) {
 
     // Send TCP_REGISTER in TCP header
     tcp_header_t tcp_header;
+    memset(&tcp_header, 0, sizeof(tcp_header));
+    
     tcp_header.data_len = htons(sizeof(tcp_register_t));
     tcp_header.error_code = ERR_NONE;
     tcp_header.msg_type = TCP_REGISTER;
