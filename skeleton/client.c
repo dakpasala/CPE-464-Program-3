@@ -61,7 +61,6 @@ int share(int tcp_sock, const char *filename) {
     // computing the SHA256
     uint8_t hash[32];
     compute_sha256(buff, size, hash);
-    DEBUG_PRINT("share(): computed SHA-256");
 
     // free the buffer from read_file_to_buffer()
     free(buff);
