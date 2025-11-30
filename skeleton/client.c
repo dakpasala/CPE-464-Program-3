@@ -862,71 +862,48 @@ int main(int argc, char *argv[]) {
     // we are successfully connected to a server
     INFO_PRINT("Conntected to directory server at %s:%u", server_ip, server_port);
 
-    // Send TCP_REGISTER in TCP header
+    // Send TCP_REGISTER - build complete message first
     tcp_header_t tcp_header;
     memset(&tcp_header, 0, sizeof(tcp_header));
-    
+
     tcp_header.data_len = htons(sizeof(tcp_register_t));
     tcp_header.error_code = ERR_NONE;
     tcp_header.msg_type = TCP_REGISTER;
-
-    // var declarations for send()
-    size_t bytes_header = 0;
-    ssize_t n_bytes_header = 0;
-
-    // iterating until all the bytes have been sent and checking for error
-    while (bytes_header < sizeof(tcp_header_t)){
-
-        n_bytes_header = send(tcp_fd, (uint8_t*) &(tcp_header) + bytes_header, sizeof(tcp_header) - bytes_header, 0);
-
-        if (n_bytes_header < 0){
-            close(tcp_fd);
-            close(udp_fd);
-            ERROR_PRINT("Failed to send TCP_REGISTER header: %s", strerror(errno));
-            return 1;
-        }
-        else if (n_bytes_header == 0){
-            ERROR_PRINT("Server closed the TCP connection while sending TCP_REGISTER header");
-            close(tcp_fd);
-            close(udp_fd);
-            return 1;
-        }
-
-        bytes_header += (size_t) n_bytes_header;
-    }
 
     // var declaration for tcp_register
     tcp_register_t tcp_register;
     memset(&tcp_register, 0, sizeof(tcp_register));
     tcp_register.udp_port = htons(udp_port);
 
-    // var declarations for send()
-    size_t bytes_register = 0;
-    ssize_t n_bytes_register = 0;
+    // build complete message in single buffer
+    uint8_t register_buf[sizeof(tcp_header_t) + sizeof(tcp_register_t)];
+    memcpy(register_buf, &tcp_header, sizeof(tcp_header_t));
+    memcpy(register_buf + sizeof(tcp_header_t), &tcp_register, sizeof(tcp_register_t));
 
-    // iterating until all the packets have been sent and checking in loop for error
-    while (bytes_register < sizeof(tcp_register)){
+    // send complete message
+    size_t total_len = sizeof(register_buf);
+    size_t bytes_sent = 0;
 
-        n_bytes_register = send(tcp_fd, (uint8_t*) &(tcp_register) + bytes_register, sizeof(tcp_register) - bytes_register, 0);
+    while (bytes_sent < total_len) {
+        ssize_t n = send(tcp_fd, register_buf + bytes_sent, total_len - bytes_sent, 0);
 
-        if (n_bytes_register < 0){
+        if (n < 0) {
             close(tcp_fd);
             close(udp_fd);
             ERROR_PRINT("Failed to send TCP_REGISTER: %s", strerror(errno));
             return 1;
         }
-
-        else if (n_bytes_register == 0){
+        else if (n == 0) {
             ERROR_PRINT("Server closed the TCP connection while sending TCP_REGISTER");
             close(tcp_fd);
             close(udp_fd);
             return 1;
         }
 
-        bytes_register += n_bytes_register;
+        bytes_sent += (size_t) n;
     }
 
-    // Receive TCP_REGISTER_ACK header
+    // receive TCP_REGISTER_ACK header
     tcp_header_t rec_header;
     memset(&rec_header, 0, sizeof(rec_header));
 
