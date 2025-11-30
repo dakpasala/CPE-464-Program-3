@@ -275,6 +275,7 @@ void process_client_message(client_t *client, const uint8_t *data, size_t len) {
         ERROR_PRINT("Message too short from client");
         return;
     }
+    
 
     const tcp_header_t *hdr = (const tcp_header_t *)data;
     uint16_t data_len = ntohs(hdr->data_len);
