@@ -42,8 +42,6 @@ int share(int tcp_sock, const char *filename) {
         return 1;
     }
 
-    DEBUG_PRINT("share(): starting, filename='%s'", filename);
-
     // reading the path here
     uint8_t* buff = NULL;
     size_t size = 0;
@@ -52,9 +50,7 @@ int share(int tcp_sock, const char *filename) {
         return 1;
     }
 
-    DEBUG_PRINT("share(): read_file_to_buffer ok, size=%zu", size);
-
-
+    // checking the size to make sure it is in correct bounds
     if (size > UINT32_MAX){
         ERROR_PRINT("The var size is too large");
         free(buff);
@@ -86,57 +82,16 @@ int share(int tcp_sock, const char *filename) {
     tcp_head.data_len = htons(sizeof(tcp_message));
     tcp_head.error_code = ERR_NONE;
 
-    DEBUG_PRINT("share(): sizeof(tcp_share_file_t) = %zu", sizeof(tcp_share_file_t));
-    DEBUG_PRINT("share(): header.data_len (host)   = %u", (unsigned)sizeof(tcp_message));
-    DEBUG_PRINT("share(): header.data_len (net)    = 0x%04x", ntohs(tcp_head.data_len));
-
-
-    // // sending the header
-    // ssize_t bytes_sent_head = 0;
-    // ssize_t n_head = 0;
-    // while (bytes_sent_head < (ssize_t)sizeof(tcp_head)){
-
-    //     n_head = send(tcp_sock, (uint8_t *) &(tcp_head) + bytes_sent_head, sizeof(tcp_head) - bytes_sent_head, 0);
-    //     if (n_head < 0){
-    //         ERROR_PRINT("send failed");
-    //         return 1;
-    //     }
-    //     else if (n_head == 0){
-    //         ERROR_PRINT("Connection closed by peer");
-    //         return 1;
-    //     }
-
-    //     bytes_sent_head += n_head;
-    // }    
-
-    // DEBUG_PRINT("share(): header sent");
-
-    // // send the message (need to loop until all bytes are sent from the message)
-    // ssize_t bytes_sent_message = 0;
-    // ssize_t n_message = 0;
-    // while (bytes_sent_message < (ssize_t)sizeof(tcp_message)){
-
-    //     n_message = send(tcp_sock, (uint8_t *) &(tcp_message) + bytes_sent_message, sizeof(tcp_message) - bytes_sent_message, 0);
-    //     if (n_message < 0){
-    //         ERROR_PRINT("send failed");
-    //         return 1;
-    //     }
-    //     else if (n_message == 0){
-    //         ERROR_PRINT("Connection closed by peer");
-    //         return 1;
-    //     }
-
-    //     bytes_sent_message += n_message;
-    // }
-
-    // Build a single contiguous buffer: [tcp_header_t][tcp_share_file_t]
+    // Building a single contiguous payload 
     uint8_t out_buf[sizeof(tcp_header_t) + sizeof(tcp_share_file_t)];
     memcpy(out_buf, &tcp_head, sizeof(tcp_head));
     memcpy(out_buf + sizeof(tcp_head), &tcp_message, sizeof(tcp_message));
-
+    
+    // checks for loop condition
     ssize_t total_len = sizeof(out_buf);
     ssize_t bytes_sent = 0;
 
+    // iterating until all the packets are sent and checking for errors in loop
     while (bytes_sent < total_len) {
         ssize_t n = send(tcp_sock, out_buf + bytes_sent, total_len - bytes_sent, 0);
         if (n < 0) {
@@ -149,12 +104,12 @@ int share(int tcp_sock, const char *filename) {
         bytes_sent += n;
     }
 
-    DEBUG_PRINT("share(): header and body sent, waiting for SHARE_ACK header");
-
-    //- Receive `TCP_SHARE_ACK` with assigned file_id
+    // var declarations for receiving the header from the server
     tcp_header_t response_header;
     ssize_t bytes_read_message = 0;
     ssize_t n_read = 0;
+
+    // iterating until all the packets have been received and chekcing for errors in loop
     while (bytes_read_message < (ssize_t)sizeof(response_header)){
     
         n_read = recv(tcp_sock, (uint8_t *) &(response_header) + bytes_read_message, sizeof(response_header) - bytes_read_message, 0);
@@ -170,17 +125,17 @@ int share(int tcp_sock, const char *filename) {
         bytes_read_message += n_read;
     }
     
-    // safety checks
+    // checking for the correct message
     if (response_header.msg_type == TCP_ERROR){
         ERROR_PRINT("There was an error: %u", response_header.error_code);
         return 1;
     }
-
     if (response_header.msg_type != TCP_SHARE_ACK){
         ERROR_PRINT("TCP msg type is not set to SHARE_ACK and this is the error code: %u", response_header.msg_type);
         return 1;
     }
 
+    // checking the data length in response header
     uint16_t body_len = ntohs(response_header.data_len);
     if (body_len != sizeof(tcp_share_ack_t)){
 
@@ -188,10 +143,12 @@ int share(int tcp_sock, const char *filename) {
         return 1;
     }
 
-    // reading the data and putting it into the the share ack
+    // creating vars for reading the payload from the server and storing in share_ack_t
     tcp_share_ack_t share_ack;
     ssize_t bytes_read_share = 0;
     ssize_t n_share = 0;
+
+    // iterating until all the packets have been received
     while (bytes_read_share < (ssize_t)sizeof(share_ack)){
     
         n_share = recv(tcp_sock, (uint8_t *) &(share_ack) + bytes_read_share, sizeof(share_ack) - bytes_read_share, 0);
