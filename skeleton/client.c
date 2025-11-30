@@ -769,6 +769,7 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
 
 int main(int argc, char *argv[]) {
 
+    // checking the number of arguments
     if (argc < 3) {
         ERROR_PRINT("Usage: %s <server_ip> <server_port> [udp_port] [loss_rate]", argv[0]);
         ERROR_PRINT("udp_port:   UDP port to bind (default: random)");
@@ -833,7 +834,7 @@ int main(int argc, char *argv[]) {
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(server_port);
 
-    // 
+    // checking to see if there was an error after calling inet_pton()
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1) {
         ERROR_PRINT("ip address isn't valid: %s", server_ip);
         close(udp_fd);
@@ -841,7 +842,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    //
+    // checking to see if there was an error after calling connect()
     if (connect(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         ERROR_PRINT("couldn't connect to dir server: %s", strerror(errno));
         close(tcp_fd);
@@ -849,17 +850,20 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // we are successfully connected to a server
     INFO_PRINT("Conntected to directory server at %s:%u", server_ip, server_port);
 
-    // Send TCP_REGISTER
+    // Send TCP_REGISTER in TCP header
     tcp_header_t tcp_header;
     tcp_header.data_len = htons(sizeof(tcp_register_t));
     tcp_header.error_code = ERR_NONE;
     tcp_header.msg_type = TCP_REGISTER;
 
+    // var declarations for send()
     size_t bytes_header = 0;
     ssize_t n_bytes_header = 0;
 
+    // iterating until all the bytes have been sent and checking for error
     while (bytes_header < sizeof(tcp_header_t)){
 
         n_bytes_header = send(tcp_fd, (uint8_t*) &(tcp_header) + bytes_header, sizeof(tcp_header) - bytes_header, 0);
@@ -867,24 +871,28 @@ int main(int argc, char *argv[]) {
         if (n_bytes_header < 0){
             close(tcp_fd);
             close(udp_fd);
-            ERROR_PRINT("There was an error in sending bytes for register header");
+            ERROR_PRINT("Failed to send TCP_REGISTER header: %s", strerror(errno));
             return 1;
         }
         else if (n_bytes_header == 0){
-
-            ERROR_PRINT("There was an error in the connection on the server side");
+            ERROR_PRINT("Server closed the TCP connection while sending TCP_REGISTER header");
+            close(tcp_fd);
+            close(udp_fd);
             return 1;
         }
 
         bytes_header += (size_t) n_bytes_header;
     }
 
+    // var declaration for tcp_register
     tcp_register_t tcp_register;
     tcp_register.udp_port = htons(udp_port);
 
+    // var declarations for send()
     size_t bytes_register = 0;
     ssize_t n_bytes_register = 0;
 
+    // iterating until all the packets have been sent and checking in loop for error
     while (bytes_register < sizeof(tcp_register)){
 
         n_bytes_register = send(tcp_fd, (uint8_t*) &(tcp_register) + bytes_register, sizeof(tcp_register) - bytes_register, 0);
@@ -892,13 +900,14 @@ int main(int argc, char *argv[]) {
         if (n_bytes_register < 0){
             close(tcp_fd);
             close(udp_fd);
-            ERROR_PRINT("There was an error in the connection on the server side");
+            ERROR_PRINT("Failed to send TCP_REGISTER: %s", strerror(errno));
             return 1;
         }
 
         else if (n_bytes_register == 0){
-
-            ERROR_PRINT("There was an error in the connection on the server side");
+            ERROR_PRINT("Server closed the TCP connection while sending TCP_REGISTER");
+            close(tcp_fd);
+            close(udp_fd);
             return 1;
         }
 
@@ -908,6 +917,7 @@ int main(int argc, char *argv[]) {
     // Receive TCP_REGISTER_ACK header
     tcp_header_t rec_header;
 
+    // var delcarations for recv()
     size_t bytes_rec_header = 0;
     ssize_t n_bytes_rec = 0;
 
@@ -918,26 +928,28 @@ int main(int argc, char *argv[]) {
         if (n_bytes_rec < 0){
             close(tcp_fd);
             close(udp_fd);
-            ERROR_PRINT("There was an error in the connection on the server side");
+            ERROR_PRINT("Failed to recv TCP_REGISTER header: %s", strerror(errno));
             return 1;
         }
 
         else if (n_bytes_rec == 0){
 
-            ERROR_PRINT("There was an error in the connection on the server side");
+            ERROR_PRINT("Server closed the TCP connection while sending TCP_REGISTER header");
+            close(tcp_fd);
+            close(udp_fd);
             return 1;
         }
 
         bytes_rec_header += (size_t) n_bytes_rec;
     }
 
+    // checking header msg return type
     if (rec_header.msg_type == TCP_ERROR){
         ERROR_PRINT("The error code for the rec header in main is %u", rec_header.error_code);
         close(tcp_fd);
         close(udp_fd);
         return 1;
     }
-
     if (rec_header.msg_type != TCP_REGISTER_ACK){
         ERROR_PRINT("The message received for the rec header in main is %u", rec_header.msg_type);
         close(tcp_fd);
@@ -945,45 +957,46 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // checking the data length
     uint16_t body_len = ntohs(rec_header.data_len);
     if (body_len != sizeof(tcp_register_ack_t)){
-
         ERROR_PRINT("There is a body size mismatch in the received header");
         close(tcp_fd);
         close(udp_fd);
         return 1;
     }
 
+    // creating var for tcp register ack
     tcp_register_ack_t tcp_reg_ack;
     
+    // var declarations for recv()
     size_t bytes_reg_ack = 0;
     ssize_t n_bytes_reg_ack = 0;
 
+    // iterating until all the bytes have been received and checking in loop  if there was an error
     while (bytes_reg_ack < sizeof(tcp_register_ack_t)){
 
         n_bytes_reg_ack = recv(tcp_fd, (uint8_t*) &(tcp_reg_ack) + bytes_reg_ack, sizeof(tcp_reg_ack) - bytes_reg_ack, 0);
 
         if (n_bytes_reg_ack < 0){
-
-            ERROR_PRINT("There is an error from the server in main for tcp_reg_ack ");
+            ERROR_PRINT("Failed to recv TCP_REGISTER_ACK: %s", strerror(errno));
             close(tcp_fd);
             close(udp_fd);
             return 1;
         }
         else if (n_bytes_reg_ack == 0){
-
-            ERROR_PRINT("here was an error in the connection on the server side for tcp_reg_ack");
+            ERROR_PRINT("Server closed the TCP connection while receiving TCP_REGISTER_ACK");
+            close(tcp_fd);
+            close(udp_fd);
             return 1;
         }
 
         bytes_reg_ack += (size_t) n_bytes_reg_ack;
     }
 
-    // here is the client id
+    // client id cast to check endianess
     uint32_t client_id = ntohl(tcp_reg_ack.client_id);
     INFO_PRINT("Connected to %u", client_id);
-
-    // implementing the user commands (share, list, get, quit)
 
     // var delcarations for polling
     struct pollfd fds[2];
@@ -992,9 +1005,11 @@ int main(int argc, char *argv[]) {
     fds[1].fd = udp_fd;
     fds[1].events = POLLIN;
 
+    // readme asks for this
     printf("> ");
     fflush(stdout);
 
+    // while the client hasn't ended the session
     while (running) {
 
         // polling
@@ -1006,10 +1021,11 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        // parsing the input 
+        // handling TCP events & parsing the input 
         if (fds[0].revents & POLLIN) {
             char line[1024];
             if (fgets(line, sizeof(line), stdin)) {
+
                 // Parse and handle command
                 handle_command(line, tcp_fd, udp_fd, &lossy_link);
                 printf("> ");
@@ -1017,30 +1033,29 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // ... handle UDP events ...
-        // if there is a packet
+        // ... handling UDP events ...
         if (fds[1].revents & POLLIN) {
 
+            // creating a buffer for 
             size_t udp_len = CHUNK_SIZE + sizeof(udp_header_t);
             uint8_t udp_buffer[udp_len];
 
+            // intitializing peer
             struct sockaddr_in peer_addr;
             socklen_t addr_len = sizeof(struct sockaddr_in);
 
+            // sending packet
             ssize_t lossy_return = lossy_recv(&lossy_link, udp_buffer, udp_len, 0, (struct sockaddr*) &peer_addr, &addr_len);
 
+            // checking return type of lossy_recv()
             if (lossy_return < 0){
-
                 ERROR_PRINT("There was an error reading from lossy_recv");
                 continue;            
             }
             else if (lossy_return == 0){
-
-                // change the message
                 ERROR_PRINT("If the peer has performed an orderly shutdown");
                 continue;
             }
-
             if (lossy_return < (ssize_t) sizeof(udp_header_t)){
                 ERROR_PRINT("There is a size mismatch");
                 continue;
@@ -1059,6 +1074,7 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
 
+                // checking if there is a mismatch
                 uint16_t req_len = ntohs(udp_header->data_len);
                 if (req_len != sizeof(udp_request_file_t)){
                     ERROR_PRINT("UDP_REQUEST_FILE data_len mismatch (got %u, expected %zu)", req_len, sizeof(udp_request_file_t));                    continue;
@@ -1066,8 +1082,8 @@ int main(int argc, char *argv[]) {
 
                 // parse the body
                 udp_request_file_t* udp_request_file = (udp_request_file_t *)(udp_buffer + sizeof(udp_header_t));
-
                 uint32_t req_file_id = ntohl(udp_request_file->file_id);
+
                 // find the file by id and checking if it exists
                 shared_file_t *file = find_shared_file_by_id(req_file_id );
                 if (file == NULL){
@@ -1107,9 +1123,6 @@ int main(int argc, char *argv[]) {
                 udp_header_t udp_header_start;
                 memset(&udp_header_start, 0, sizeof(udp_header_start));
                 udp_header_start.msg_type = UDP_FILE_START;
-                // udp_header_start.flags = 0;
-                // udp_header_start.seq_num = 0;
-                // udp_header_start.ack_num = 0;
                 udp_header_start.data_len = htons(sizeof(udp_file_start_t));
                 udp_header_start.window = htons(WINDOW_SIZE);
                 udp_header_start.checksum = 0;
@@ -1123,10 +1136,10 @@ int main(int argc, char *argv[]) {
                 uint16_t start_payload_size = sizeof(udp_header_t) + sizeof(udp_file_start_t);
                 uint8_t buff[start_payload_size];
 
-                // copy the header
+                // copying the header into buffer
                 memcpy(buff, &udp_header_start, sizeof(udp_header_t));
 
-                // copy the body after the buffer
+                // copying the body after the buffer
                 memcpy(buff + sizeof(udp_header_t), &udp_file_start, sizeof(udp_file_start_t));
 
                 // calculating checksum and storing in buffer pointer
@@ -1134,10 +1147,11 @@ int main(int argc, char *argv[]) {
                 udp_header_t *buff_header = (udp_header_t *) buff;
                 buff_header->checksum = check_sum;
 
+                // sending packet
                 ssize_t n_sent_udp_start_file = 0;
                 n_sent_udp_start_file = sendto(udp_fd, buff, start_payload_size, 0, (struct sockaddr *)&peer_addr, addr_len);
 
-                // check errors
+                // check sendto() errors
                 if (n_sent_udp_start_file < 0){
                     ERROR_PRINT("sendto UDP_FILE_START failed");
                     continue;               
@@ -1168,18 +1182,19 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
 
-                // global sr state
+                // global sr state and checking if there has been an error 
                 int sr_init_res = sr_sender_init(&global_sender, udp_fd, &peer_addr, file_buffer,(uint32_t) actual_size, &lossy_link);
-
                 if (sr_init_res < 0){
                     ERROR_PRINT("There was an error initializing sr for sender");
                     free(file_buffer);
                     continue;
                 }
 
+                // enabling the flag for transferring
                 global_file_buffer = file_buffer;
                 transfer_active = 1;
 
+                // sending the initial window
                 sr_sender_send_window(&global_sender);
             }
             else if (udp_header->msg_type == UDP_ACK){
@@ -1189,49 +1204,6 @@ int main(int argc, char *argv[]) {
                     sr_sender_handle_ack(&global_sender, udp_header);
                 }
             }
-            // else if (udp_header->msg_type == UDP_FILE_START){
-
-            //     // validating packet length
-            //     if (lossy_return < (ssize_t)(sizeof(udp_header_t) + sizeof(udp_file_start_t))) {
-            //         ERROR_PRINT("UDP_FILE_START packet too short");
-            //         continue;
-            //     }
-
-            //     // 
-            //     uint16_t udp_header_data_len = ntohs(udp_header->data_len);
-            //     if (udp_header_data_len != sizeof(udp_file_start_t)) {
-            //         ERROR_PRINT("UDP_FILE_START data_len mismatch (got %u, expected %zu)", udp_header_data_len, sizeof(udp_file_start_t));
-            //         continue;
-            //     }
-
-            //     // Parse the udp_file_start_t body.
-            //     udp_file_start_t *file_start = (udp_file_start_t *) (udp_buffer + sizeof(udp_header_t));
-                
-            //     // initializing receiver and checking return type
-            //     int res_receiver_init = sr_receiver_init(&global_receiver,udp_fd, &peer_addr, file_start->file_size, file_start->num_chunks, &lossy_link);
-            //     if (res_receiver_init < 0){
-            //         ERROR_PRINT("There was an error initializing sr for receiver");
-            //         continue;
-            //     }
-
-            //     // set the flag to receive data
-            //     receive_active = 1;
-            // }
-            // else if (udp_header->msg_type == UDP_DATA){
-
-            //     if (receive_active){
-
-            //         int receiver_handle_res = sr_receiver_handle_data(&global_receiver, udp_buffer, (size_t) lossy_return);
-
-            //         // if there as an error, cleanup
-            //         if (receiver_handle_res < 0){
-            //             ERROR_PRINT("sr_receiver_handle_data reported an error");
-            //             sr_receiver_cleanup(&global_receiver);
-            //             receive_active = 0;
-            //             continue;
-            //         }
-            //     }
-            // }
         }
 
         // for selective repeat
@@ -1259,32 +1231,9 @@ int main(int argc, char *argv[]) {
                 transfer_active = 0;
             }  
         }
-
-        // if (receive_active){
-
-        //     // if the receiver is done getting the file
-        //     if (sr_receiver_is_complete(&global_receiver)) {
-
-        //         // var declarations
-        //         uint32_t file_size = 0;
-        //         const uint8_t *file_buf = sr_receiver_get_file(&global_receiver, &file_size);
-
-        //         // save to disk
-        //         if (write_buffer_to_file(receive_filename, file_buf, file_size) == 0) {
-        //             INFO_PRINT("Download complete: saved to %s", receive_filename);
-        //         } 
-        //         else {
-        //             ERROR_PRINT("Failed to save file to %s", receive_filename);
-        //         }
-
-        //         // free SR receiver resources
-        //         sr_receiver_cleanup(&global_receiver);
-        //         receive_active = 0;
-        //     }  
-        // }
     }
 
-    // do I close the sockets here or in quit()?
+    // closing the file descriptors and returning successfully
     close(tcp_fd);
     close(udp_fd);
     return 0;
