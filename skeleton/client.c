@@ -895,6 +895,7 @@ int main(int argc, char *argv[]) {
 
     // var declaration for tcp_register
     tcp_register_t tcp_register;
+    memset(&tcp_register, 0, sizeof(tcp_register));
     tcp_register.udp_port = htons(udp_port);
 
     // var declarations for send()
@@ -925,6 +926,8 @@ int main(int argc, char *argv[]) {
 
     // Receive TCP_REGISTER_ACK header
     tcp_header_t rec_header;
+    memset(&rec_header, 0, sizeof(rec_header));
+
 
     // var delcarations for recv()
     size_t bytes_rec_header = 0;
