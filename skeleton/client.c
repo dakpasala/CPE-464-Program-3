@@ -546,6 +546,26 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     uint32_t start_file_size = ntohl(start->file_size);
     uint32_t start_chunks = ntohl(start->num_chunks);
 
+    if (start_file_size == 0 || start_chunks == 0) {
+        ERROR_PRINT("Invalid file start from sender (file_size=0). Aborting.");
+        return 1;   // abort get()
+    }
+
+    // abort
+    if (start_file_size != file_size) {
+        ERROR_PRINT("File size mismatch from sender: expected %u, got %u",
+                    file_size, start_file_size);
+        return 1;
+    }
+
+    // if chunk count doesn't match formula → abort
+    uint32_t expected_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    if (start_chunks != expected_chunks) {
+        ERROR_PRINT("Chunk count mismatch from sender: expected %u, got %u",
+                    expected_chunks, start_chunks);
+        return 1;
+    }
+
     // checking to see ig receiver init failed
     if (sr_receiver_init(&receiver, udp_sock, &peer, start_file_size, start_chunks, lossy_link) != 0){
         ERROR_PRINT();
@@ -558,7 +578,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     socklen_t sender_len_sr = sizeof(sender_addr_sr);
 
     // UDP selective repeat loop
-    while(!sr_receiver_is_complete(&receiver)){
+    while (!sr_receiver_is_complete(&receiver)) {
 
         // receiving a packet
         ssize_t rec_len_sr = lossy_recv(lossy_link, recv_buff, max_udp_packet_size, 0, (struct sockaddr*)&sender_addr_sr, &sender_len_sr);
@@ -623,7 +643,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
         // print success
         INFO_PRINT("Saved file: %s", rec_file.filename);
     }
-    else{
+    else {
 
         // var delcarations to print mismatch
         char rec_file_hash_str[65];
@@ -1101,10 +1121,42 @@ int main(int argc, char *argv[]) {
                 fseek(fp, 0, SEEK_SET);
 
                 // checking to see if the sizes match
-                if (actual_size != file->file_size){
-                    ERROR_PRINT("There was an a mismatch on copying the file size on disk");
+                if (actual_size != file->file_size) {
+                    ERROR_PRINT("There was a mismatch on copying the file size on disk");
+
+                    // Build abort UDP_FILE_START
+                    udp_header_t hdr;
+                    memset(&hdr, 0, sizeof(hdr));
+                    hdr.msg_type = UDP_FILE_START;
+                    hdr.data_len = htons(sizeof(udp_file_start_t));
+                    hdr.window = htons(WINDOW_SIZE);
+
+                    udp_file_start_t body;
+                    body.file_size = htonl(0);
+                    body.num_chunks = htonl(0);
+
+                    uint8_t buf[sizeof(udp_header_t) + sizeof(udp_file_start_t)];
+                    memcpy(buf, &hdr, sizeof(hdr));
+                    memcpy(buf + sizeof(hdr), &body, sizeof(body));
+
+                    // Compute checksum
+                    udp_header_t *hdr_ptr = (udp_header_t *)buf;
+                    hdr_ptr->checksum = calculate_checksum(buf, sizeof(buf));
+
+                    // SEND using lossy_send() (not sendto!)
+                    ssize_t sent = lossy_send(&lossy_link,
+                                            buf,
+                                            sizeof(buf),
+                                            0,
+                                            (struct sockaddr *)&peer_addr,
+                                            addr_len);
+
+                    if (sent < 0) {
+                        ERROR_PRINT("Failed to send abort FILE_START");
+                    }
+
                     fclose(fp);
-                    continue;
+                    continue; 
                 }
 
                 // need to figure out the number of chunks
