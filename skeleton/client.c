@@ -1124,7 +1124,7 @@ int main(int argc, char *argv[]) {
                 if (actual_size != file->file_size) {
                     ERROR_PRINT("There was a mismatch on copying the file size on disk");
 
-                    // Build abort UDP_FILE_START
+                    // build abort UDP_FILE_START
                     udp_header_t hdr;
                     memset(&hdr, 0, sizeof(hdr));
                     hdr.msg_type = UDP_FILE_START;
@@ -1139,11 +1139,9 @@ int main(int argc, char *argv[]) {
                     memcpy(buf, &hdr, sizeof(hdr));
                     memcpy(buf + sizeof(hdr), &body, sizeof(body));
 
-                    // Compute checksum
                     udp_header_t *hdr_ptr = (udp_header_t *)buf;
                     hdr_ptr->checksum = calculate_checksum(buf, sizeof(buf));
 
-                    // SEND using lossy_send() (not sendto!)
                     ssize_t sent = lossy_send(&lossy_link,
                                             buf,
                                             sizeof(buf),
