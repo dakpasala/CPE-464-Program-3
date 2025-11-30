@@ -547,7 +547,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     uint32_t start_chunks = ntohl(start->num_chunks);
 
     if (start_file_size == 0 || start_chunks == 0) {
-        ERROR_PRINT("Invalid file start from sender (file_size=0). Aborting.");
+        ERROR_PRINT("Invalid file start from sender (file_size=0) or packet was corrupted. Aborting.");
         return 1;   // abort get()
     }
 
@@ -558,7 +558,6 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
         return 1;
     }
 
-    // if chunk count doesn't match formula → abort
     uint32_t expected_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
     if (start_chunks != expected_chunks) {
         ERROR_PRINT("Chunk count mismatch from sender: expected %u, got %u",
