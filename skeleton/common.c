@@ -133,13 +133,13 @@ int write_buffer_to_file(const char *filepath, const uint8_t *buffer, size_t siz
 
 /* Compute SHA-256 hash */
 void compute_sha256(const uint8_t *data, size_t len, uint8_t hash[32]) {
-    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    EVP_MD_CTX *ctx = EVP_MD_CTX_create();
     if (!ctx) return;
 
     EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
     EVP_DigestUpdate(ctx, data, len);
     EVP_DigestFinal_ex(ctx, hash, NULL);
-    EVP_MD_CTX_free(ctx);
+    EVP_MD_CTX_destroy(ctx);
 }
 
 /* Convert hash to hex string */
