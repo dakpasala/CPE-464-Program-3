@@ -546,25 +546,6 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     uint32_t start_file_size = ntohl(start->file_size);
     uint32_t start_chunks = ntohl(start->num_chunks);
 
-    if (start_file_size == 0 || start_chunks == 0) {
-        ERROR_PRINT("Invalid file start from sender (file_size=0) or packet was corrupted. Aborting.");
-        return 1;   // abort get()
-    }
-
-    // abort
-    if (start_file_size != file_size) {
-        ERROR_PRINT("File size mismatch from sender: expected %u, got %u",
-                    file_size, start_file_size);
-        return 1;
-    }
-
-    uint32_t expected_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-    if (start_chunks != expected_chunks) {
-        ERROR_PRINT("Chunk count mismatch from sender: expected %u, got %u",
-                    expected_chunks, start_chunks);
-        return 1;
-    }
-
     // checking to see ig receiver init failed
     if (sr_receiver_init(&receiver, udp_sock, &peer, start_file_size, start_chunks, lossy_link) != 0){
         ERROR_PRINT();
@@ -1119,43 +1100,6 @@ int main(int argc, char *argv[]) {
                 long actual_size = ftell(fp);
                 fseek(fp, 0, SEEK_SET);
 
-                // checking to see if the sizes match
-                if (actual_size != file->file_size) {
-                    ERROR_PRINT("There was a mismatch on copying the file size on disk");
-
-                    // build abort UDP_FILE_START
-                    udp_header_t hdr;
-                    memset(&hdr, 0, sizeof(hdr));
-                    hdr.msg_type = UDP_FILE_START;
-                    hdr.data_len = htons(sizeof(udp_file_start_t));
-                    hdr.window = htons(WINDOW_SIZE);
-
-                    udp_file_start_t body;
-                    body.file_size = htonl(0);
-                    body.num_chunks = htonl(0);
-
-                    uint8_t buf[sizeof(udp_header_t) + sizeof(udp_file_start_t)];
-                    memcpy(buf, &hdr, sizeof(hdr));
-                    memcpy(buf + sizeof(hdr), &body, sizeof(body));
-
-                    udp_header_t *hdr_ptr = (udp_header_t *)buf;
-                    hdr_ptr->checksum = calculate_checksum(buf, sizeof(buf));
-
-                    ssize_t sent = lossy_send(&lossy_link,
-                                            buf,
-                                            sizeof(buf),
-                                            0,
-                                            (struct sockaddr *)&peer_addr,
-                                            addr_len);
-
-                    if (sent < 0) {
-                        ERROR_PRINT("Failed to send abort FILE_START");
-                    }
-
-                    fclose(fp);
-                    continue; 
-                }
-
                 // need to figure out the number of chunks
                 int num_chunks = (actual_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
 
@@ -1192,11 +1136,11 @@ int main(int argc, char *argv[]) {
                 n_sent_udp_start_file = sendto(udp_fd, buff, start_payload_size, 0, (struct sockaddr *)&peer_addr, addr_len);
 
                 // check sendto() errors
-                if (n_sent_udp_start_file < 0){
+                if (n_sent_udp_start_file < 0) {
                     ERROR_PRINT("sendto UDP_FILE_START failed");
                     continue;               
                 }
-                if (n_sent_udp_start_file == 0){
+                if (n_sent_udp_start_file == 0) {
                     ERROR_PRINT("the connection timed out");
                     continue;
                 }
@@ -1255,8 +1199,10 @@ int main(int argc, char *argv[]) {
             // check for timeouts
             uint64_t curr_ms = get_time_ms();
             int res = sr_sender_check_timeouts(&global_sender, curr_ms);
-            if (res < 0){
+            if (res < 0) {
                 ERROR_PRINT("sr_sender_check_timeouts exceeded max retries, aborting transfer");
+                printf("> ");
+                fflush(stdout);
                 free(global_file_buffer);
                 global_file_buffer = NULL;
                 sr_sender_cleanup(&global_sender);
@@ -1265,6 +1211,23 @@ int main(int argc, char *argv[]) {
             // check to see if we are done transferring
             else if (sr_sender_is_complete(&global_sender)){
                 INFO_PRINT("File is done transferring");
+
+                // DEBUGGING
+                sr_stats_t stats;
+                sr_get_stats(&stats);
+
+                printf("Transfer stats:\n");
+                printf("  Packets sent: %d\n", stats.packets_sent);
+                printf("  Retransmissions: %d (%.1f%%)\n",
+                    stats.packets_retransmitted,
+                    stats.packets_sent == 0 ? 0 :
+                    100.0 * stats.packets_retransmitted / stats.packets_sent);
+                printf("  ACKs received: %d\n", stats.acks_received);
+
+                // END OF DEBUGGING
+                
+                printf("> ");
+                fflush(stdout);
                 free(global_file_buffer);
                 global_file_buffer = NULL;
                 sr_sender_cleanup(&global_sender);

@@ -22,6 +22,34 @@
  * Initialize sender state.
  * Setup window, calculate number of chunks, initialize sequence numbers.
  */
+
+static int packets_sent = 0;
+static int packets_retransmitted = 0;
+static int acks_received = 0;
+
+void sr_get_stats(sr_stats_t *out) {
+    out->packets_sent = packets_sent;
+    out->packets_retransmitted = packets_retransmitted;
+    out->acks_received = acks_received;
+}
+
+
+void print_sender_window(sr_sender_t *s) {
+    printf("Window [base=%u next=%u]: ", s->base, s->next_seq);
+    for (uint32_t i = 0; i < WINDOW_SIZE && s->base + i < s->next_seq; i++) {
+        uint32_t seq = s->base + i;
+        int idx = seq % WINDOW_SIZE;
+
+        char state = s->window[idx].state == PKT_EMPTY   ? 'E' :
+                     s->window[idx].state == PKT_PENDING ? 'P' :
+                     s->window[idx].state == PKT_ACKED   ? 'A' :
+                     '?';
+
+        printf("[%u:%c] ", seq, state);
+    }
+    printf("\n");
+}
+
 int sr_sender_init(sr_sender_t *sender, int udp_fd,
                    const struct sockaddr_in *peer_addr,
                    const uint8_t *file_data, uint32_t file_size,
@@ -165,6 +193,7 @@ int sr_sender_send_window(sr_sender_t *sender) {
         ssize_t packet_len = sizeof(udp_header_t) + chunk_len;
 
         if (sender->lossy_link) {
+            packets_sent++;
             lossy_send(sender->lossy_link,
                     packet,
                     packet_len,
@@ -231,6 +260,7 @@ int sr_sender_handle_ack(sr_sender_t *sender, const udp_header_t *hdr) {
     if (sender->window[idx].state == PKT_PENDING && sender->window[idx].seq_num == ack_num) {
         sender->window[idx].state = PKT_ACKED;
         sender->chunks_acked++;
+        acks_received++;
     }
 
     while (sender->base < sender->num_chunks) {
@@ -239,6 +269,8 @@ int sr_sender_handle_ack(sr_sender_t *sender, const udp_header_t *hdr) {
         sender->window[base_idx].state = PKT_EMPTY;
         sender->base++;
     }
+
+   // print_sender_window(sender);
 
     return 0;
 }
@@ -279,6 +311,9 @@ int sr_sender_check_timeouts(sr_sender_t *sender, uint64_t now_ms) {
             size_t packet_len = sizeof(udp_header_t) + entry->data_len;
 
             if (sender->lossy_link) {
+                packets_sent++;
+                packets_retransmitted++;
+
                 lossy_send(sender->lossy_link,
                         packet,
                         packet_len,

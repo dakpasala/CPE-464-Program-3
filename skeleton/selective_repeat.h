@@ -13,6 +13,15 @@
  * data transfer over UDP.
  */
 
+typedef struct {
+    int packets_sent;
+    int packets_retransmitted;
+    int acks_received;
+} sr_stats_t;
+
+void sr_get_stats(sr_stats_t *out);
+
+
 /* Packet state in send window */
 typedef enum {
     PKT_EMPTY = 0,      // Slot is empty
