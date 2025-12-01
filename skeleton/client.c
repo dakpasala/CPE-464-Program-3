@@ -97,7 +97,7 @@ int share(int tcp_sock, const char *filename) {
             ERROR_PRINT("send failed");
             return 1;
         } else if (n == 0) {
-            ERROR_PRINT("Connection closed by peer");
+            ERROR_PRINT("Connection closed");
             return 1;
         }
         bytes_sent += n;
@@ -117,7 +117,7 @@ int share(int tcp_sock, const char *filename) {
             return 1;
         }
         else if (n_read == 0){
-            ERROR_PRINT("Connection closed by peer");
+            ERROR_PRINT("Connection closed");
             return 1;
         }
 
@@ -156,7 +156,7 @@ int share(int tcp_sock, const char *filename) {
             return 1;
         }
         else if (n_share == 0){
-            ERROR_PRINT("Connection closed by peer");
+            ERROR_PRINT("Connection closed");
             return 1;
         }
 
@@ -332,7 +332,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
             return 1;
         } 
         else if (n == 0) {
-            ERROR_PRINT("Connection closed by peer while sending TCP_REQUEST_FILE");
+            ERROR_PRINT("Connection closed while sending TCP_REQUEST_FILE");
             return 1;
         }
         bytes_sent += n;
@@ -703,6 +703,7 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
 
     // n == 1 → only command and n >= 2 → command + argument
     int n = sscanf(p, "%15s %511[^\n]", cmd, arg);
+    int res = 0;
 
 
     // checking cmd = "share"
@@ -725,7 +726,11 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
         }
 
         // calling share and then returning back to loop
-        share(tcp_sock, fname);
+        res = share(tcp_sock, fname);
+        if (res!= 0){
+            quit(tcp_sock);
+            running = 0;
+        }
         return;
     }
 
@@ -733,7 +738,11 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
     if (n == 1 && (strcmp(cmd, "list") == 0)){
         
         // call list() and then returning back to loop
-        list(tcp_sock);
+        res = list(tcp_sock);
+        if (res!= 0){
+            quit(tcp_sock);
+            running = 0;
+        }
         return;
     }
 
@@ -758,7 +767,11 @@ void handle_command(char* line, int tcp_sock, int udp_sock, lossy_link_t *lossy_
 
         // casting to uint32_t and calling get(), returning after call
         uint32_t file_id = (uint32_t)val;
-        get(tcp_sock, udp_sock, file_id, lossy_link);
+        res = get(tcp_sock, udp_sock, file_id, lossy_link);
+        if (res!= 0){
+            quit(tcp_sock);
+            running = 0;
+        }
         return;
     }
 
