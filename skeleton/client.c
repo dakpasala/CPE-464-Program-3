@@ -289,7 +289,7 @@ int list(int tcp_sock) {
         // casting to ensure endianess
         uint32_t id = ntohl(file_info[i].file_id);
         uint32_t size = ntohl(file_info[i].file_size);
-        uint16_t peers = ntohs(file_info[i].num_peers);
+        uint16_t peers = file_info[i].num_peers;
 
         // printing the info for available files
         INFO_PRINT("File ID: %u, Filename: %s, File size %u, Num peers: %u", id, file_info[i].filename, size, peers);
