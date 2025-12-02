@@ -517,11 +517,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
         struct in_addr expected_addr;
         expected_addr.s_addr = rec_file.peer_ip;
 
-        ERROR_PRINT("Received UDP packet from unexpected sender: %s:%u (expected %s:%u)",
-            inet_ntoa(sender_addr.sin_addr),
-            ntohs(sender_addr.sin_port),
-            inet_ntoa(expected_addr),
-            peer_port);
+        ERROR_PRINT("Received UDP packet from unexpected sender: %s:%u (expected %s:%u)", inet_ntoa(sender_addr.sin_addr), ntohs(sender_addr.sin_port), inet_ntoa(expected_addr), peer_port);
         return 1;
     }
 
@@ -548,7 +544,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
 
     // checking to see ig receiver init failed
     if (sr_receiver_init(&receiver, udp_sock, &peer, start_file_size, start_chunks, lossy_link) != 0){
-        ERROR_PRINT();
+        ERROR_PRINT("receiver init failed");
         sr_receiver_cleanup(&receiver);
         return 1;
     }
@@ -565,7 +561,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
 
         // checking for error in packet
         if (rec_len_sr < 0){
-            ERROR_PRINT();
+            ERROR_PRINT("rec_len_sr is less than 0");
             sr_receiver_cleanup(&receiver);
             return -1;
         }
@@ -609,7 +605,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
 
         // check for open error
         if (fp == NULL){
-            ERROR_PRINT();
+            ERROR_PRINT("the fp is NULL in get()");
             sr_receiver_cleanup(&receiver);
             return -1;
         }
@@ -1226,16 +1222,16 @@ int main(int argc, char *argv[]) {
                 INFO_PRINT("File is done transferring");
 
                 // DEBUGGING
-                sr_stats_t stats;
-                sr_get_stats(&stats);
+                // sr_stats_t stats;
+                // sr_get_stats(&stats);
 
-                printf("Transfer stats:\n");
-                printf("  Packets sent: %d\n", stats.packets_sent);
-                printf("  Retransmissions: %d (%.1f%%)\n",
-                    stats.packets_retransmitted,
-                    stats.packets_sent == 0 ? 0 :
-                    100.0 * stats.packets_retransmitted / stats.packets_sent);
-                printf("  ACKs received: %d\n", stats.acks_received);
+                // printf("Transfer stats:\n");
+                // printf("  Packets sent: %d\n", stats.packets_sent);
+                // printf("  Retransmissions: %d (%.1f%%)\n",
+                //     stats.packets_retransmitted,
+                //     stats.packets_sent == 0 ? 0 :
+                //     100.0 * stats.packets_retransmitted / stats.packets_sent);
+                // printf("  ACKs received: %d\n", stats.acks_received);
 
                 // END OF DEBUGGING
                 
