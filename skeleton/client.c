@@ -525,7 +525,7 @@ int get(int tcp_sock, int udp_sock, uint32_t file_id, lossy_link_t *lossy_link) 
     // checking message type
     if (rec_udp_header->msg_type != UDP_FILE_START){
         ERROR_PRINT("Expected UDP_FILE_START (%d) but received msg_type=%u", UDP_FILE_START, rec_udp_header->msg_type);
-        return 1;
+        return 0;
     }
 
     // checking the data length
